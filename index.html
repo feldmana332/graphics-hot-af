@@ -1,0 +1,884 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <meta name="theme-color" content="#0a0a0f" />
+  <title>Graphics Hot AF</title>
+  <style>
+    html, body, #root { margin: 0; padding: 0; background: #0a0a0f; }
+    * { -webkit-tap-highlight-color: transparent; }
+  </style>
+
+  <!-- React + Babel via CDN: no build step required -->
+  <script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
+  <!-- GIF encoder for exporting animated charts (used on demand) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.js"></script>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel" data-presets="react">
+const { useState, useRef, useEffect, useCallback } = React;
+
+const CHART_TYPES = ["Pie","Donut","Bar","Line"];
+const COLORS = ["#F7931A","#627EEA","#26A17B","#E84142","#9B59B6","#3498DB","#E67E22","#2ECC71","#E91E63","#00BCD4","#FF5722","#8BC34A","#FFC107","#795548","#607D8B"];
+
+const DATASETS = {
+  bitcoin:    { title:"Major Bitcoin Holders (Est. BTC)",           type:"Pie",  source:{name:"BitcoinTreasuries.net",url:"https://bitcointreasuries.net"}, data:[{label:"Satoshi Nakamoto",value:1100000},{label:"MicroStrategy",value:214000},{label:"US Government",value:200000},{label:"Binance",value:190000},{label:"Bitcoin ETFs",value:170000},{label:"Block.one",value:140000},{label:"Coinbase",value:100000},{label:"Other Institutions",value:296000}] },
+  mortgage:   { title:"30-Year Fixed Mortgage Rate (1975–2024)",    type:"Line", source:{name:"Freddie Mac / FRED",url:"https://fred.stlouisfed.org/series/MORTGAGE30US"}, data:[{label:"1975",value:9.05},{label:"1977",value:8.85},{label:"1979",value:11.2},{label:"1981",value:16.6},{label:"1983",value:13.2},{label:"1985",value:12.4},{label:"1987",value:10.2},{label:"1989",value:10.3},{label:"1991",value:9.25},{label:"1993",value:7.31},{label:"1995",value:7.93},{label:"1997",value:7.6},{label:"1999",value:7.44},{label:"2001",value:6.97},{label:"2003",value:5.83},{label:"2005",value:5.87},{label:"2007",value:6.34},{label:"2009",value:5.04},{label:"2011",value:4.45},{label:"2013",value:3.98},{label:"2015",value:3.85},{label:"2017",value:3.99},{label:"2019",value:3.94},{label:"2021",value:2.96},{label:"2023",value:6.81},{label:"2024",value:6.95}] },
+  treasury:   { title:"10-Year Treasury Yield (1945–2024)",         type:"Line", source:{name:"FRED / US Treasury",url:"https://fred.stlouisfed.org/series/GS10"}, data:[{label:"1945",value:1.67},{label:"1950",value:2.32},{label:"1955",value:2.84},{label:"1960",value:4.12},{label:"1965",value:4.28},{label:"1970",value:7.35},{label:"1975",value:7.99},{label:"1980",value:11.43},{label:"1982",value:13.91},{label:"1985",value:10.62},{label:"1988",value:8.85},{label:"1990",value:8.55},{label:"1993",value:5.87},{label:"1995",value:6.58},{label:"1998",value:5.26},{label:"2000",value:6.03},{label:"2003",value:4.01},{label:"2006",value:4.79},{label:"2008",value:3.66},{label:"2010",value:3.22},{label:"2012",value:1.80},{label:"2015",value:2.14},{label:"2018",value:2.91},{label:"2020",value:0.89},{label:"2022",value:2.95},{label:"2024",value:4.35}] },
+  sp500:      { title:"S&P 500 Avg Annual Return by Decade (%)",    type:"Bar",  source:{name:"Macrotrends",url:"https://www.macrotrends.net/2526/sp-500-historical-annual-returns"}, data:[{label:"1950s",value:19.4},{label:"1960s",value:7.8},{label:"1970s",value:5.9},{label:"1980s",value:17.5},{label:"1990s",value:18.2},{label:"2000s",value:-0.99},{label:"2010s",value:13.6},{label:"2020s",value:11.2}] },
+  smartphone: { title:"Global Smartphone Market Share 2024",        type:"Pie",  source:{name:"IDC / Statcounter",url:"https://gs.statcounter.com/vendor-market-share/mobile"}, data:[{label:"Samsung",value:20.1},{label:"Apple",value:17.3},{label:"Xiaomi",value:12.5},{label:"OPPO",value:8.8},{label:"vivo",value:8.6},{label:"Transsion",value:7.1},{label:"Others",value:25.6}] },
+  gdp:        { title:"Top 10 Economies by GDP 2024 (Trillion USD)",type:"Bar",  source:{name:"World Bank",url:"https://data.worldbank.org/indicator/NY.GDP.MKTP.CD"}, data:[{label:"USA",value:27.4},{label:"China",value:17.7},{label:"Germany",value:4.4},{label:"Japan",value:4.2},{label:"India",value:3.7},{label:"UK",value:3.1},{label:"France",value:3.0},{label:"Brazil",value:2.2},{label:"Italy",value:2.1},{label:"Canada",value:2.1}] },
+  temp:       { title:"Global Temperature Anomaly °C (1975–2023)", type:"Line", source:{name:"NASA GISS",url:"https://climate.nasa.gov/vital-signs/global-temperature/"}, data:[{label:"1975",value:-0.01},{label:"1978",value:0.07},{label:"1981",value:0.26},{label:"1984",value:0.15},{label:"1987",value:0.27},{label:"1990",value:0.39},{label:"1993",value:0.24},{label:"1996",value:0.30},{label:"1999",value:0.31},{label:"2002",value:0.56},{label:"2005",value:0.62},{label:"2008",value:0.54},{label:"2011",value:0.54},{label:"2014",value:0.68},{label:"2017",value:0.90},{label:"2020",value:1.02},{label:"2023",value:1.17}] },
+};
+
+const QUICK_BUTTONS = [
+  {label:"₿ Bitcoin",key:"bitcoin"},{label:"🏠 Mortgage",key:"mortgage"},
+  {label:"📊 Treasury",key:"treasury"},{label:"📈 S&P 500",key:"sp500"},
+  {label:"📱 Phones",key:"smartphone"},{label:"🌍 GDP",key:"gdp"},{label:"🌡 Temps",key:"temp"},
+];
+
+// ── Chart drawing (pure fns, shared by live preview + GIF export) ───────────────
+// pv = animation progress 0→1. bg: if set, paints a solid background (GIF export);
+// if null, clears to transparent so the page's dark panel shows through (live view).
+// Show at most `max` evenly-spaced category labels (always include the last) so dense
+// data — many years, minutes, etc. — stays readable without dropping any data points.
+function labelStep(n,max){return Math.max(1,Math.ceil(n/max));}
+
+// Compact number formatting for axis ticks / value labels (1.1M, 214k, 9.05).
+function fmtNum(v){
+  const a=Math.abs(v);
+  if(a>=1e9) return (v/1e9).toFixed(a>=1e10?0:1)+"B";
+  if(a>=1e6) return (v/1e6).toFixed(a>=1e7?0:1)+"M";
+  if(a>=1e3) return (v/1e3).toFixed(a>=1e4?0:1)+"k";
+  if(Number.isInteger(v)) return String(v);
+  return String(Math.round(v*100)/100);
+}
+
+// "Nice numbers" axis (Heckbert): pick a clean step (1/2/5 × 10^n) and round the
+// bounds outward, so y-axis ticks land on round values (5.0, 5.5, 6.0 / 0, 10, 20)
+// instead of arbitrary fractions like 5.37.
+function niceNum(range,round){
+  const exp=Math.floor(Math.log10(range||1)), f=(range||1)/Math.pow(10,exp);
+  const nf=round?(f<1.5?1:f<3?2:f<7?5:10):(f<=1?1:f<=2?2:f<=5?5:10);
+  return nf*Math.pow(10,exp);
+}
+function niceTicks(min,max,maxTicks){
+  maxTicks=maxTicks||5;
+  const range=niceNum((max-min)||Math.abs(max)||1,false);
+  const step=niceNum(range/Math.max(1,maxTicks-1),true);
+  const niceMin=Math.floor(min/step)*step, niceMax=Math.ceil(max/step)*step;
+  const n=Math.round((niceMax-niceMin)/step), ticks=[];
+  for(let i=0;i<=n;i++){let v=niceMin+i*step; if(Math.abs(v)<step*1e-6)v=0; ticks.push(v);}
+  return {niceMin,niceMax,step,ticks};
+}
+// Format a tick at the step's natural precision (whole→compact, else fixed decimals).
+function axisTickLabel(v,step){
+  if(step>=1) return fmtNum(v);
+  const dec=Math.max(0,Math.ceil(-Math.log10(step)));
+  return v.toFixed(dec);
+}
+
+// Color palettes (series colors) and light/dark themes (background + ink).
+const PALETTES={
+  Default:COLORS,
+  Ocean:["#38BDF8","#3B82F6","#14B8A6","#6366F1","#06B6D4","#2563EB","#0EA5E9","#8B5CF6","#22D3EE","#818CF8"],
+  Warm:["#FB923C","#EF4444","#F59E0B","#F43F5E","#FBBF24","#DC2626","#F97316","#E11D48","#FCD34D","#FB7185"],
+  Forest:["#22C55E","#84CC16","#10B981","#4D7C0F","#16A34A","#65A30D","#0D9488","#15803D","#A3E635","#34D399"],
+  Mono:["#94A3B8","#64748B","#475569","#334155","#CBD5E1","#1E293B","#A8A29E","#78716C","#D6D3D1","#57534E"],
+};
+const THEME_DARK ={bg:"#0f0f1a",grid:"#1e1e2e",tick:"#666",axisLabel:"#888",axisTitle:"#aaa",title:"#fff",value:"#fff",pct:"#fff",legend:"#bbb",source:"#666"};
+const THEME_LIGHT={bg:"#ffffff",grid:"#e5e5ea",tick:"#888",axisLabel:"#555",axisTitle:"#444",title:"#111",value:"#222",pct:"#fff",legend:"#333",source:"#888"};
+function themeOf(opts){return opts&&opts.theme==="light"?THEME_LIGHT:THEME_DARK;}
+function paletteOf(opts){return (opts&&opts.colors)||COLORS;}
+
+// Axis range/ticks honoring include-zero and manual min/max overrides.
+function buildAxis(dataMin,dataMax,opts){
+  opts=opts||{};
+  const maxTicks=opts.maxTicks||5;
+  const lo=opts.includeZero?Math.min(0,dataMin):dataMin, hi=opts.includeZero?Math.max(0,dataMax):dataMax;
+  const hasMin=opts.yMin!=null&&opts.yMin!==""&&!isNaN(Number(opts.yMin));
+  const hasMax=opts.yMax!=null&&opts.yMax!==""&&!isNaN(Number(opts.yMax));
+  if(!hasMin&&!hasMax) return niceTicks(lo,hi,maxTicks);
+  const auto=niceTicks(lo,hi,maxTicks);
+  let min=hasMin?Number(opts.yMin):auto.niceMin, max=hasMax?Number(opts.yMax):auto.niceMax;
+  if(max<=min) max=min+(auto.step||1);
+  const step=niceNum((max-min)/Math.max(1,maxTicks-1),true), ticks=[min];
+  for(let v=Math.ceil(min/step)*step; v<max-step*1e-6; v+=step){const vv=Math.abs(v)<step*1e-6?0:v; if(vv>min+step*1e-6)ticks.push(vv);}
+  ticks.push(max);
+  return {niceMin:min,niceMax:max,step,ticks};
+}
+
+// Draw optional rotated y-axis title and centered x-axis title.
+function drawAxisTitles(ctx,padL,plotW,padT,plotH,H,xLab,yLab,color){
+  ctx.fillStyle=color||"#999";ctx.font="bold 9px monospace";
+  if(xLab){ctx.textAlign="center";ctx.textBaseline="alphabetic";ctx.fillText(xLab,padL+plotW/2,H-3);}
+  if(yLab){ctx.save();ctx.translate(11,padT+plotH/2);ctx.rotate(-Math.PI/2);ctx.textAlign="center";ctx.textBaseline="middle";ctx.fillText(yLab,0,0);ctx.restore();}
+}
+
+function drawPie(ctx,W,H,data,pv,donut,bg,opts){
+  const th=themeOf(opts), colors=paletteOf(opts), sep=bg||th.bg;
+  const total=data.reduce((s,d)=>s+Math.abs(d.value),0);
+  const cx=W/2,cy=H/2,r=Math.min(W,H)*0.38,inner=donut?r*0.52:0;
+  if(bg){ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);}else ctx.clearRect(0,0,W,H);
+  let a=-Math.PI/2;const sl=[];
+  data.forEach((item,i)=>{
+    const sw=(Math.abs(item.value)/total)*2*Math.PI*pv,end=a+sw;
+    ctx.beginPath();ctx.moveTo(cx,cy);ctx.arc(cx,cy,r,a,end);
+    if(donut)ctx.arc(cx,cy,inner,end,a,true);else ctx.lineTo(cx,cy);
+    ctx.fillStyle=colors[i%colors.length];ctx.fill();ctx.strokeStyle=sep;ctx.lineWidth=2;ctx.stroke();
+    sl.push({mid:a+sw/2,sw,pct:((Math.abs(item.value)/total)*100).toFixed(1)});a=end;
+  });
+  if(pv>0.85){const al=Math.min(1,(pv-0.85)/0.15);
+    sl.forEach(({mid,sw,pct})=>{if(sw<0.18)return;const lr=donut?(r+inner)/2:r*0.68;
+      ctx.globalAlpha=al;ctx.font=`bold ${Math.max(9,r*0.09)}px monospace`;
+      ctx.fillStyle=th.pct;ctx.textAlign="center";ctx.textBaseline="middle";
+      ctx.fillText(`${pct}%`,cx+Math.cos(mid)*lr,cy+Math.sin(mid)*lr);ctx.globalAlpha=1;
+    });
+  }
+}
+
+function drawBar(ctx,W,H,data,pv,bg,opts){
+  opts=opts||{};
+  const th=themeOf(opts), colors=paletteOf(opts);
+  const xLab=opts.xLabel&&opts.xLabel.trim(), yLab=opts.yLabel&&opts.yLabel.trim();
+  const dataMax=Math.max(...data.map(d=>Math.abs(d.value)))||1;
+  const {niceMin,niceMax,step,ticks}=buildAxis(0,dataMax,opts), denom=(niceMax-niceMin)||1;
+  const padT=14, padB=34+(xLab?16:0), padL=42+(yLab?14:0), padR=14;
+  const plotW=W-padL-padR, plotH=H-padT-padB, gap=plotW/data.length, bw=gap*0.6;
+  if(bg){ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);}else ctx.clearRect(0,0,W,H);
+  // gridlines + nice y-axis ticks
+  ctx.textBaseline="middle";
+  ticks.forEach(v=>{
+    const y=padT+(1-(v-niceMin)/denom)*plotH;
+    ctx.strokeStyle=th.grid;ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(padL,y);ctx.lineTo(W-padR,y);ctx.stroke();
+    ctx.font="8px monospace";ctx.fillStyle=th.tick;ctx.textAlign="right";ctx.fillText(axisTickLabel(v,step),padL-5,y);
+  });
+  ctx.textBaseline="alphabetic";
+  const lstep=labelStep(data.length,10);   // thin x labels
+  const showValues=opts.valueLabels==="on"?true:opts.valueLabels==="off"?false:data.length<=12;
+  const baseY=H-padB;
+  data.forEach((item,i)=>{
+    const bh=Math.max(0,(Math.abs(item.value)-niceMin)/denom)*plotH*pv,x=padL+i*gap+(gap-bw)/2,y=baseY-bh;
+    const c=colors[i%colors.length], g=ctx.createLinearGradient(0,y,0,baseY);g.addColorStop(0,c);g.addColorStop(1,c+"33");
+    ctx.fillStyle=g;ctx.beginPath();ctx.roundRect(x,y,bw,bh,[4,4,0,0]);ctx.fill();
+    if(i%lstep===0||i===data.length-1){ctx.font="9px monospace";ctx.fillStyle=th.axisLabel;ctx.textAlign="center";ctx.fillText(item.label.length>9?item.label.slice(0,8)+"…":item.label,x+bw/2,baseY+12);}
+    if(showValues&&pv>0.85){ctx.globalAlpha=Math.min(1,(pv-0.85)/0.15);ctx.font="bold 10px monospace";ctx.fillStyle=th.value;ctx.fillText(fmtNum(item.value),x+bw/2,y-5);ctx.globalAlpha=1;}
+  });
+  drawAxisTitles(ctx,padL,plotW,padT,plotH,H,xLab,yLab,th.axisTitle);
+}
+
+// Catmull-Rom → cubic bezier through pts (current point already at pts[0]).
+function curveThrough(ctx,pts){
+  for(let i=0;i<pts.length-1;i++){
+    const p0=pts[i-1]||pts[i],p1=pts[i],p2=pts[i+1],p3=pts[i+2]||p2;
+    ctx.bezierCurveTo(p1.x+(p2.x-p0.x)/6,p1.y+(p2.y-p0.y)/6,p2.x-(p3.x-p1.x)/6,p2.y-(p3.y-p1.y)/6,p2.x,p2.y);
+  }
+}
+function drawLine(ctx,W,H,data,pv,bg,opts){
+  opts=opts||{};
+  const th=themeOf(opts), lc=paletteOf(opts)[0], smooth=!!opts.smooth, sep=bg||th.bg;
+  const xLab=opts.xLabel&&opts.xLabel.trim(), yLab=opts.yLabel&&opts.yLabel.trim();
+  const maxV=Math.max(...data.map(d=>d.value)),minV=Math.min(...data.map(d=>d.value));
+  const {niceMin,niceMax,step,ticks}=buildAxis(minV,maxV,opts), denom=(niceMax-niceMin)||1;
+  const padT=14, padB=32+(xLab?16:0), padL=44+(yLab?14:0), padR=14;
+  const plotW=W-padL-padR, plotH=H-padT-padB, baseY=H-padB;
+  const pts=data.map((d,i)=>({x:padL+(i/Math.max(data.length-1,1))*plotW,y:padT+(1-(d.value-niceMin)/denom)*plotH,label:d.label,val:d.value}));
+  const vis=Math.max(2,Math.ceil(pts.length*pv)),vpts=pts.slice(0,vis);
+  if(bg){ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);}else ctx.clearRect(0,0,W,H);
+  ctx.textBaseline="middle";
+  ticks.forEach(v=>{const y=padT+(1-(v-niceMin)/denom)*plotH;ctx.strokeStyle=th.grid;ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(padL,y);ctx.lineTo(W-padR,y);ctx.stroke();ctx.font="8px monospace";ctx.fillStyle=th.tick;ctx.textAlign="right";ctx.fillText(axisTickLabel(v,step),padL-5,y);});
+  ctx.textBaseline="alphabetic";
+  if(vpts.length>=2){
+    const g=ctx.createLinearGradient(0,padT,0,baseY);g.addColorStop(0,lc+"44");g.addColorStop(1,lc+"00");
+    ctx.beginPath();ctx.moveTo(vpts[0].x,baseY);ctx.lineTo(vpts[0].x,vpts[0].y);
+    if(smooth)curveThrough(ctx,vpts);else vpts.forEach((q,i)=>i&&ctx.lineTo(q.x,q.y));
+    ctx.lineTo(vpts[vpts.length-1].x,baseY);ctx.closePath();ctx.fillStyle=g;ctx.fill();
+    ctx.beginPath();ctx.moveTo(vpts[0].x,vpts[0].y);
+    if(smooth)curveThrough(ctx,vpts);else vpts.forEach((q,i)=>i&&ctx.lineTo(q.x,q.y));
+    ctx.strokeStyle=lc;ctx.lineWidth=2.5;ctx.lineJoin="round";ctx.stroke();
+    const lstep=labelStep(data.length,10), showVals=opts.valueLabels==="on";
+    vpts.forEach((q,i)=>{ctx.beginPath();ctx.arc(q.x,q.y,3,0,Math.PI*2);ctx.fillStyle=lc;ctx.fill();ctx.strokeStyle=sep;ctx.lineWidth=1.5;ctx.stroke();
+      const tick=i%lstep===0||i===data.length-1;
+      if(tick){ctx.font="8px monospace";ctx.fillStyle=th.axisLabel;ctx.textAlign="center";ctx.fillText(q.label,q.x,baseY+12);}
+      if(showVals&&tick){ctx.font="bold 9px monospace";ctx.fillStyle=th.value;ctx.textAlign="center";ctx.fillText(fmtNum(q.val),q.x,q.y-7);}
+    });
+  }
+  drawAxisTitles(ctx,padL,plotW,padT,plotH,H,xLab,yLab,th.axisTitle);
+}
+
+const CHART_DIMS={Pie:{w:320,h:320},Donut:{w:320,h:320},Bar:{w:480,h:280},Line:{w:480,h:280}};
+const CHART_STEP={Pie:0.007,Donut:0.007,Bar:0.01,Line:0.012};
+function drawChart(type,ctx,W,H,data,pv,bg,opts){
+  if(type==="Pie")drawPie(ctx,W,H,data,pv,false,bg,opts);
+  else if(type==="Donut")drawPie(ctx,W,H,data,pv,true,bg,opts);
+  else if(type==="Line")drawLine(ctx,W,H,data,pv,bg,opts);
+  else drawBar(ctx,W,H,data,pv,bg,opts);
+}
+
+// ── Live chart components ───────────────────────────────────────────────────────
+function useChartAnim(type,data,animKey,opts){
+  const ref=useRef(),anim=useRef(),p=useRef(0);
+  const optsKey=JSON.stringify(opts||{});
+  // Light theme needs a solid canvas fill; dark theme stays transparent over the card.
+  const liveBg=()=>opts&&opts.theme==="light"?THEME_LIGHT.bg:null;
+  useEffect(()=>{p.current=0;cancelAnimationFrame(anim.current);
+    const step=CHART_STEP[type]||0.01;
+    const go=()=>{p.current=Math.min(1,p.current+step);const c=ref.current;
+      if(c)drawChart(type,c.getContext("2d"),c.width,c.height,data,p.current,liveBg(),opts);
+      if(p.current<1)anim.current=requestAnimationFrame(go);};
+    anim.current=requestAnimationFrame(go);return()=>cancelAnimationFrame(anim.current);
+  },[animKey,data,type]);
+  // Redraw the final frame (no replay) when formatting is edited.
+  useEffect(()=>{const c=ref.current;if(c&&p.current>=1)drawChart(type,c.getContext("2d"),c.width,c.height,data,1,liveBg(),opts);},[optsKey]);
+  return ref;
+}
+
+function AnimatedPieChart({data,donut=false,animKey}){
+  const ref=useChartAnim(donut?"Donut":"Pie",data,animKey);
+  return <canvas ref={ref} width={320} height={320} style={{width:"100%",maxWidth:320}}/>;
+}
+
+function AnimatedBarChart({data,animKey,opts}){
+  const ref=useChartAnim("Bar",data,animKey,opts);
+  return <canvas ref={ref} width={480} height={280} style={{width:"100%",maxWidth:480}}/>;
+}
+
+function AnimatedLineChart({data,animKey,opts}){
+  const ref=useChartAnim("Line",data,animKey,opts);
+  return <canvas ref={ref} width={480} height={280} style={{width:"100%",maxWidth:480}}/>;
+}
+
+// ── Export composition (shared by GIF + PNG) ────────────────────────────────────
+// Geometry + resolved theme/palette/title for an exported chart.
+function chartLayout(chartData,chartType,fmt){
+  fmt=fmt||{};
+  const th=themeOf(fmt), colors=PALETTES[fmt.palette]||COLORS;
+  const title=(fmt.title!=null?fmt.title:chartData.title)||"Chart";
+  const axisOpts={xLabel:fmt.xLabel,yLabel:fmt.yLabel,includeZero:fmt.includeZero,maxTicks:fmt.maxTicks,
+    valueLabels:fmt.valueLabels,smooth:fmt.smooth,yMin:fmt.yMin,yMax:fmt.yMax,theme:fmt.theme,colors};
+  const cd=CHART_DIMS[chartType]||CHART_DIMS.Bar, titleH=46;
+  const legend=(chartType==="Pie"||chartType==="Donut")&&chartData.data.length<=12?chartData.data:null;
+  const legendH=legend?Math.ceil(legend.length/3)*20+12:0;
+  const srcText=chartData.source&&chartData.source.name?("Source: "+chartData.source.name):null;
+  const sourceH=srcText?22:0;
+  return {th,colors,title,axisOpts,cd,titleH,legend,legendH,srcText,W:cd.w,H:titleH+cd.h+legendH+sourceH+10};
+}
+// Paint one full frame (bg + title + chart + legend + source) onto ctx at progress pv.
+function composeChart(ctx,L,chartData,chartType,pv){
+  const {th,colors,title,axisOpts,cd,titleH,legend,legendH,W,H,srcText}=L;
+  ctx.fillStyle=th.bg;ctx.fillRect(0,0,W,H);
+  ctx.fillStyle=th.title;ctx.font="bold 16px monospace";ctx.textAlign="center";ctx.textBaseline="middle";
+  ctx.fillText(title.length>52?title.slice(0,51)+"…":title,W/2,titleH/2);
+  ctx.save();ctx.translate(0,titleH);drawChart(chartType,ctx,cd.w,cd.h,chartData.data,pv,th.bg,axisOpts);ctx.restore();
+  if(legend){
+    ctx.textBaseline="middle";ctx.textAlign="left";ctx.font="11px monospace";
+    const colW=W/3,baseY=titleH+cd.h+12;
+    legend.forEach((d,i)=>{const x=(i%3)*colW+12,y=baseY+Math.floor(i/3)*20;
+      ctx.fillStyle=colors[i%colors.length];ctx.fillRect(x,y-4,9,9);
+      ctx.fillStyle=th.legend;ctx.fillText(d.label.length>16?d.label.slice(0,15)+"…":d.label,x+14,y);});
+  }
+  if(srcText){ctx.textAlign="left";ctx.textBaseline="middle";ctx.font="italic 11px monospace";ctx.fillStyle=th.source;
+    ctx.fillText(srcText.length>64?srcText.slice(0,63)+"…":srcText,12,titleH+cd.h+legendH+12);}
+}
+
+// Animated GIF — encodes the build-up via gif.js.
+async function exportChartGif(chartData,chartType,onProgress,fmt){
+  const L=chartLayout(chartData,chartType,fmt), S=2;
+  const canvas=document.createElement("canvas");canvas.width=L.W*S;canvas.height=L.H*S;
+  const ctx=canvas.getContext("2d");ctx.scale(S,S);
+  // Web Workers can't load cross-origin scripts directly, so fetch the worker and
+  // hand gif.js a same-origin blob URL instead.
+  let workerScript;
+  try{
+    const txt=await fetch("https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.worker.js").then(r=>r.text());
+    workerScript=URL.createObjectURL(new Blob([txt],{type:"application/javascript"}));
+  }catch(e){throw new Error("Couldn't load the GIF encoder — needs internet the first time.");}
+  const gif=new window.GIF({workers:2,quality:8,width:L.W*S,height:L.H*S,workerScript,repeat:-1});
+  const N=40;
+  for(let i=0;i<=N;i++){composeChart(ctx,L,chartData,chartType,i/N);gif.addFrame(ctx,{copy:true,delay:i===N?2200:55});}
+  return await new Promise((resolve,reject)=>{
+    gif.on("progress",p=>onProgress&&onProgress(Math.round(p*100)));
+    gif.on("finished",blob=>{URL.revokeObjectURL(workerScript);resolve(blob);});
+    gif.on("abort",()=>reject(new Error("GIF render aborted.")));
+    gif.render();
+  });
+}
+
+// Static high-res PNG of the finished chart.
+async function exportChartPng(chartData,chartType,fmt){
+  const L=chartLayout(chartData,chartType,fmt), S=3;          // 3× for crisp slides
+  const canvas=document.createElement("canvas");canvas.width=L.W*S;canvas.height=L.H*S;
+  const ctx=canvas.getContext("2d");ctx.scale(S,S);
+  composeChart(ctx,L,chartData,chartType,1);
+  return await new Promise((resolve,reject)=>{canvas.toBlob(b=>b?resolve(b):reject(new Error("PNG export failed.")),"image/png");});
+}
+
+function Legend({data}){
+  return <div style={{display:"flex",flexWrap:"wrap",gap:"6px 12px",marginTop:12,justifyContent:"center"}}>
+    {data.map((d,i)=><div key={i} style={{display:"flex",alignItems:"center",gap:5,fontSize:10,color:"#aaa",fontFamily:"monospace"}}>
+      <div style={{width:8,height:8,borderRadius:2,background:COLORS[i%COLORS.length],flexShrink:0}}/>{d.label}
+    </div>)}
+  </div>;
+}
+
+function parseCSV(text){
+  const lines=text.trim().split("\n").filter(l=>l.trim());
+  if(lines.length<2)return null;
+  return lines.slice(1).map(line=>{
+    const parts=line.split(",").map(p=>p.trim().replace(/^"|"$/g,""));
+    return{label:parts[0],value:parseFloat(parts[1])||0};
+  }).filter(d=>d.label&&!isNaN(d.value));
+}
+
+function validateData(rows){
+  const issues=[];
+  if(!rows||rows.length===0){issues.push("No data rows found.");}
+  else{
+    if(rows.length<2) issues.push("Only 1 data point — charts need at least 2.");
+    if(rows.length>50) issues.push(`${rows.length} rows is a lot — consider trimming to ≤20 for clarity.`);
+    const badVals=rows.filter(r=>isNaN(r.value)||r.value===0);
+    if(badVals.length>0) issues.push(`${badVals.length} row(s) have zero or non-numeric values: ${badVals.slice(0,3).map(r=>r.label).join(", ")}${badVals.length>3?"…":""}`);
+    const dupLabels=rows.map(r=>r.label).filter((v,i,a)=>a.indexOf(v)!==i);
+    if(dupLabels.length>0) issues.push(`Duplicate labels: ${[...new Set(dupLabels)].join(", ")}`);
+    const allSame=rows.every(r=>r.value===rows[0].value);
+    if(allSame&&rows.length>1) issues.push("All values are identical — chart won't be meaningful.");
+  }
+  return issues;
+}
+
+function DataTable({data}){
+  return <div style={{overflowX:"auto",marginTop:4}}>
+    <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
+      <thead><tr style={{borderBottom:"1px solid #1e1e2e"}}>
+        {["#","LABEL","VALUE"].map(h=><th key={h} style={{padding:"5px 8px",textAlign:h==="VALUE"?"right":"left",color:"#555",fontWeight:700,fontFamily:"monospace"}}>{h}</th>)}
+      </tr></thead>
+      <tbody>{data.map((d,i)=><tr key={i} style={{borderBottom:"1px solid #111"}}>
+        <td style={{padding:"4px 8px",color:"#444",fontFamily:"monospace"}}>{i+1}</td>
+        <td style={{padding:"4px 8px",color:"#ccc",fontFamily:"monospace"}}>{d.label}</td>
+        <td style={{padding:"4px 8px",textAlign:"right",color:"#F7931A",fontFamily:"monospace"}}>{d.value}</td>
+      </tr>)}</tbody>
+    </table>
+  </div>;
+}
+
+// ── Direct Anthropic API call (browser-side, no backend) ────────────────────────
+const API_KEY_STORE="ghaf_anthropic_api_key";
+const GEN_SYSTEM_PROMPT="You generate datasets for a charting tool. Given the user's description, produce real, accurate figures when you know them. Return: a concise human-readable `title`; `x_label` = what the row labels represent (e.g. \"Year\", \"Country\"); `y_label` = what the values represent INCLUDING units (e.g. \"Rate (%)\", \"GDP (Trillion USD)\", \"Holders (BTC)\"); `chart_type` = the best fit (Line for time series/trends, Bar for category comparisons, Pie or Donut for parts of a whole); and up to 20 `rows`, each with a `label` and a numeric `value` (plain number only — no units, no thousands separators, no percent signs).";
+const GEN_SCHEMA={
+  type:"object",
+  properties:{
+    title:{type:"string"},
+    x_label:{type:"string"},
+    y_label:{type:"string"},
+    chart_type:{type:"string",enum:["Bar","Line","Pie","Donut"]},
+    rows:{type:"array",items:{type:"object",properties:{label:{type:"string"},value:{type:"number"}},required:["label","value"],additionalProperties:false}},
+  },
+  required:["title","x_label","y_label","chart_type","rows"],
+  additionalProperties:false,
+};
+
+function stripCodeFences(t){
+  let s=(t||"").trim();
+  if(s.startsWith("```")) s=s.replace(/^```[a-zA-Z]*\s*\n?/,"").replace(/\n?```\s*$/,"").trim();
+  return s;
+}
+
+// Calls Claude directly from the browser. Returns {title,xLabel,yLabel,chartType,rows}
+// (rows: [{label,value}]) or throws a friendly Error.
+async function generateDatasetWithClaude(apiKey,description){
+  let resp;
+  try{
+    resp=await fetch("https://api.anthropic.com/v1/messages",{
+      method:"POST",
+      headers:{
+        "Content-Type":"application/json",
+        "x-api-key":apiKey,
+        "anthropic-version":"2023-06-01",
+        "anthropic-dangerous-direct-browser-access":"true",   // enables CORS for browser calls
+      },
+      body:JSON.stringify({
+        model:"claude-opus-4-7",
+        max_tokens:2048,
+        // System prompt is stable across calls → cache it. (Short, so it may fall
+        // under the model's minimum cacheable size and just not cache — harmless.)
+        system:[{type:"text",text:GEN_SYSTEM_PROMPT,cache_control:{type:"ephemeral"}}],
+        output_config:{format:{type:"json_schema",schema:GEN_SCHEMA}},   // structured output
+        messages:[{role:"user",content:`Dataset to generate:\n\n${description}`}],
+      }),
+    });
+  }catch(e){ throw new Error("Couldn't reach Anthropic — check your internet connection."); }
+
+  if(!resp.ok){
+    let msg="";
+    try{ const j=await resp.json(); msg=(j&&j.error&&j.error.message)||""; }catch(e){}
+    if(resp.status===401) throw new Error("Invalid API key (401) — check it and re-save.");
+    if(resp.status===403) throw new Error("Key lacks permission (403)"+(msg?": "+msg:"")+".");
+    if(resp.status===429) throw new Error("Rate limited (429) — wait a moment and retry.");
+    if(resp.status===529) throw new Error("Anthropic is overloaded (529) — retry shortly.");
+    if(resp.status>=500) throw new Error(`Anthropic server error (${resp.status}) — retry shortly.`);
+    throw new Error(`Request failed (${resp.status})`+(msg?": "+msg:"")+".");
+  }
+
+  const data=await resp.json();
+  if(data.stop_reason==="refusal") throw new Error("Claude declined this request — try rephrasing the dataset.");
+  if(data.stop_reason==="max_tokens") throw new Error("Response was cut off — try a smaller / simpler dataset.");
+  const text=(data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("").trim();
+  if(!text) throw new Error("Claude returned an empty response — try again.");
+  let obj;
+  try{ obj=JSON.parse(stripCodeFences(text)); }catch(e){ throw new Error("Couldn't parse Claude's response — try again."); }
+  const rows=(obj.rows||[])
+    .map(r=>({label:String(r&&r.label!=null?r.label:"").trim(),value:Number(r&&r.value)}))
+    .filter(r=>r.label&&!isNaN(r.value));
+  if(!rows.length) throw new Error("Claude returned no usable data rows — try rephrasing.");
+  const types=["Bar","Line","Pie","Donut"];
+  return {
+    title:(obj.title||description).trim(),
+    xLabel:(obj.x_label||"").trim(),
+    yLabel:(obj.y_label||"").trim(),
+    chartType:types.includes(obj.chart_type)?obj.chart_type:"Bar",
+    rows,
+  };
+}
+
+// ── Main ──────────────────────────────────────────────────────────────────────
+const STAGE_COLLECT="collect", STAGE_REVIEW="review", STAGE_CHART="chart";
+
+function DataVizStudio11(){
+  const [stage,setStage]=useState(STAGE_COLLECT);
+  const [tab,setTab]=useState("quick");          // quick | csv | prompt
+  const [csvText,setCsvText]=useState("");
+  const [promptText,setPromptText]=useState("");
+  const [promptCopied,setPromptCopied]=useState(false);
+  const [csvError,setCsvError]=useState("");
+  const [pending,setPending]=useState(null);
+  const [validationIssues,setValidationIssues]=useState([]);
+  const [savedCSV,setSavedCSV]=useState(false);
+  const [chartData,setChartData]=useState(null);
+  const [chartType,setChartType]=useState("Bar");
+  const [animKey,setAnimKey]=useState(0);
+  const [editTitle,setEditTitle]=useState("");
+  const [axisX,setAxisX]=useState("");
+  const [axisY,setAxisY]=useState("");
+  const [incZero,setIncZero]=useState(false);
+  const [gridTicks,setGridTicks]=useState(5);
+  const [valueMode,setValueMode]=useState("auto");   // auto | on | off
+  const [theme,setTheme]=useState("dark");           // dark | light
+  const [palette,setPalette]=useState("Default");
+  const [smooth,setSmooth]=useState(false);
+  const [yMin,setYMin]=useState("");
+  const [yMax,setYMax]=useState("");
+  const [pngBusy,setPngBusy]=useState(false);
+  const [gifBusy,setGifBusy]=useState(false);
+  const [gifPct,setGifPct]=useState(0);
+  const [apiKey,setApiKey]=useState("");
+  const [keySaved,setKeySaved]=useState(false);
+  const [generating,setGenerating]=useState(false);
+  const [genError,setGenError]=useState("");
+
+  useEffect(()=>{ try{const k=localStorage.getItem(API_KEY_STORE);if(k){setApiKey(k);setKeySaved(true);}}catch(e){} },[]);
+
+  const saveKey=()=>{
+    const k=(apiKey||"").trim();
+    try{ if(k){localStorage.setItem(API_KEY_STORE,k);setKeySaved(true);setGenError("");} else {localStorage.removeItem(API_KEY_STORE);setKeySaved(false);} }
+    catch(e){ setGenError("Couldn't save the key (localStorage blocked)."); }
+  };
+  const clearKey=()=>{ try{localStorage.removeItem(API_KEY_STORE);}catch(e){} setApiKey("");setKeySaved(false);setGenError(""); };
+
+  const handleGenerate=async()=>{
+    if(generating)return;
+    const k=(apiKey||"").trim();
+    if(!k){setGenError("Paste and save your Anthropic API key first.");return;}
+    if(!promptText.trim()){setGenError("Describe the data you want first.");return;}
+    setGenError(""); setGenerating(true);
+    try{
+      const res=await generateDatasetWithClaude(k,promptText.trim());
+      const data=res.rows;
+      const csvLines=["Label,Value",...data.map(d=>`${d.label},${d.value}`)].join("\n");
+      setCsvText(csvLines);
+      setPending({title:res.title,data,source:null,chartType:res.chartType,notes:"Generated by Claude — verify the numbers before presenting.",csvExport:csvLines,xLabel:res.xLabel,yLabel:res.yLabel});
+      setValidationIssues(validateData(data)); setSavedCSV(false); setStage(STAGE_REVIEW);
+    }catch(e){ setGenError(e.message||"Generation failed."); }
+    finally{ setGenerating(false); }
+  };
+
+  const goReview=(title,data,source,suggestedType,notes="")=>{
+    const issues=validateData(data);
+    const csvLines=["Label,Value",...data.map(d=>`${d.label},${d.value}`)].join("\n");
+    setPending({title,data,source,chartType:suggestedType||"Bar",notes,csvExport:csvLines});
+    setValidationIssues(issues); setSavedCSV(false); setStage(STAGE_REVIEW);
+  };
+
+  const handleQuick=(key)=>{
+    const ds=DATASETS[key];
+    goReview(ds.title,ds.data,ds.source,ds.type,"Pre-loaded verified dataset.");
+  };
+
+  const handleCSV=()=>{
+    const parsed=parseCSV(csvText);
+    if(!parsed?.length){setCsvError("Could not parse. Make sure first row is: Label,Value");return;}
+    setCsvError("");
+    goReview("Custom Data",parsed,null,"Bar","");
+  };
+
+  const buildClaudePrompt=()=>{
+    const base=promptText.trim()||"[describe your data here]";
+    return `Please give me data for the following as a CSV with exactly two columns (Label and Value, plain numbers only, no units in the Value column, max 20 rows):\n\n${base}\n\nFormat your response as:\nLabel,Value\nrow1label,123\nrow2label,456\n...\n\nInclude nothing else — just the CSV.`;
+  };
+
+  const copyPrompt=()=>{
+    navigator.clipboard.writeText(buildClaudePrompt()).then(()=>{
+      setPromptCopied(true); setTimeout(()=>setPromptCopied(false),2500);
+    });
+  };
+
+  const handleApprove=()=>{
+    setChartData(pending); setChartType(pending.chartType);
+    setEditTitle(pending.title||""); setAxisX(pending.xLabel||""); setAxisY(pending.yLabel||"");
+    setIncZero(false); setGridTicks(5); setValueMode("auto");
+    setTheme("dark"); setPalette("Default"); setSmooth(false); setYMin(""); setYMax("");
+    setAnimKey(k=>k+1); setStage(STAGE_CHART);
+  };
+
+  const chartOpts={xLabel:axisX,yLabel:axisY,includeZero:incZero,maxTicks:gridTicks,valueLabels:valueMode,
+    theme,colors:PALETTES[palette]||COLORS,smooth,yMin,yMax};
+  const exportFmt=()=>({title:editTitle,xLabel:axisX,yLabel:axisY,includeZero:incZero,maxTicks:gridTicks,
+    valueLabels:valueMode,theme,palette,smooth,yMin,yMax});
+  const fileBase=()=>((editTitle||(chartData&&chartData.title)||"chart").replace(/[^a-z0-9]/gi,"_").toLowerCase());
+
+  const handleSaveCSV=()=>{
+    if(!pending&&!chartData)return;
+    const src=pending||chartData;
+    const blob=new Blob([src.csvExport],{type:"text/csv"});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");a.href=url;
+    a.download=(src.title||"data").replace(/[^a-z0-9]/gi,"_").toLowerCase()+".csv";
+    a.click();URL.revokeObjectURL(url);setSavedCSV(true);
+  };
+
+  const downloadBlob=(blob,ext)=>{
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");a.href=url;a.download=fileBase()+"_"+chartType.toLowerCase()+"."+ext;
+    a.click();URL.revokeObjectURL(url);
+  };
+
+  const saveGif=async()=>{
+    if(gifBusy||!chartData)return;
+    if(!window.GIF){alert("GIF encoder didn't load (needs internet). Try a hard-reload.");return;}
+    setGifBusy(true);setGifPct(0);
+    try{ downloadBlob(await exportChartGif(chartData,chartType,setGifPct,exportFmt()),"gif"); }
+    catch(e){alert(e.message||"GIF export failed.");}
+    finally{setGifBusy(false);}
+  };
+
+  const savePng=async()=>{
+    if(pngBusy||!chartData)return;
+    setPngBusy(true);
+    try{ downloadBlob(await exportChartPng(chartData,chartType,exportFmt()),"png"); }
+    catch(e){alert(e.message||"PNG export failed.");}
+    finally{setPngBusy(false);}
+  };
+
+  const reset=()=>{setStage(STAGE_COLLECT);setPending(null);setSavedCSV(false);setCsvError("");setValidationIssues([]);};
+
+  const renderChart=(data)=>{
+    if(!data?.length)return null;
+    switch(chartType){
+      case"Pie":   return <AnimatedPieChart data={data} animKey={animKey}/>;
+      case"Donut": return <AnimatedPieChart data={data} donut animKey={animKey}/>;
+      case"Bar":   return <AnimatedBarChart data={data} animKey={animKey} opts={chartOpts}/>;
+      case"Line":  return <AnimatedLineChart data={data} animKey={animKey} opts={chartOpts}/>;
+      default:     return <AnimatedBarChart data={data} animKey={animKey} opts={chartOpts}/>;
+    }
+  };
+
+  const tabBtn=(t,label)=>({
+    padding:"7px 14px",borderRadius:6,border:"1px solid",cursor:"pointer",fontSize:11,fontFamily:"monospace",fontWeight:700,
+    borderColor:tab===t?"#F7931A":"#2a2a3e",background:tab===t?"#F7931A18":"transparent",color:tab===t?"#F7931A":"#555",
+  });
+  const chartBtn=(t)=>({
+    padding:"6px 13px",borderRadius:6,border:"1px solid",cursor:"pointer",fontSize:11,fontFamily:"monospace",
+    borderColor:chartType===t?"#627EEA":"#1e1e2e",background:chartType===t?"#627EEA18":"transparent",color:chartType===t?"#627EEA":"#555",
+  });
+
+  const Footnote=({source})=>source?(
+    <div style={{marginTop:12,textAlign:"left",fontSize:10,color:"#555",fontStyle:"italic"}}>
+      ¹ {source.url?<a href={source.url} target="_blank" rel="noopener noreferrer" style={{color:"#555",textDecoration:"underline",textDecorationColor:"#333"}}>{source.name}</a>:source.name}
+    </div>
+  ):null;
+
+  return(
+    <div style={{minHeight:"100vh",background:"#0a0a0f",color:"#e0e0e0",fontFamily:"monospace",paddingBottom:40}}>
+      <link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&display=swap" rel="stylesheet"/>
+
+      {/* Header */}
+      <div style={{borderBottom:"1px solid #1e1e2e",padding:"13px 18px",display:"flex",alignItems:"center",gap:12,background:"#0d0d18"}}>
+        <div style={{width:28,height:28,background:"linear-gradient(135deg,#F7931A,#E84142)",borderRadius:7,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13}}>📊</div>
+        <div style={{flex:1}}>
+          <div style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:15,color:"#fff"}}>Graphics Hot AF</div>
+          <div style={{fontSize:9,color:"#444",letterSpacing:1}}>CLASSROOMS & RESEARCH</div>
+        </div>
+        {/* Step pills */}
+        <div style={{display:"flex",gap:4}}>
+          {[[STAGE_COLLECT,"1 Collect"],[STAGE_REVIEW,"2 Review"],[STAGE_CHART,"3 Chart"]].map(([s,label])=>(
+            <div key={s} style={{padding:"3px 9px",borderRadius:20,fontSize:9,fontWeight:700,
+              background:stage===s?"#F7931A22":stage===STAGE_CHART&&s===STAGE_REVIEW?"#26A17B22":"transparent",
+              border:`1px solid ${stage===s?"#F7931A":stage===STAGE_CHART&&s!==STAGE_COLLECT?"#26A17B44":"#1e1e2e"}`,
+              color:stage===s?"#F7931A":stage===STAGE_CHART&&s!==STAGE_COLLECT?"#26A17B":"#333"}}>{label}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div style={{maxWidth:820,margin:"0 auto",padding:"16px 14px",display:"flex",flexDirection:"column",gap:12}}>
+
+        {/* ── STAGE 1 ── */}
+        {stage===STAGE_COLLECT&&(
+          <div style={{background:"#0f0f1a",border:"1px solid #1e1e2e",borderRadius:10,padding:16}}>
+            <div style={{fontSize:9,color:"#444",letterSpacing:1,marginBottom:10}}>DATA SOURCE</div>
+            <div style={{display:"flex",gap:6,marginBottom:16,flexWrap:"wrap"}}>
+              <button style={tabBtn("quick","⚡ Examples")} onClick={()=>setTab("quick")}>⚡ Examples</button>
+              <button style={tabBtn("csv","📄 Paste CSV")} onClick={()=>setTab("csv")}>📄 Paste CSV</button>
+              <button style={tabBtn("prompt","💬 Ask Claude")} onClick={()=>setTab("prompt")}>💬 Ask Claude</button>
+            </div>
+
+            {tab==="quick"&&(
+              <>
+                <div style={{fontSize:9,color:"#444",letterSpacing:1,marginBottom:8}}>READY-TO-GRAPH DATASETS</div>
+                <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+                  {QUICK_BUTTONS.map(({label,key})=>(
+                    <button key={key} onClick={()=>handleQuick(key)} style={{padding:"9px 14px",borderRadius:8,border:"1px solid #2a2a3e",background:"#12121e",color:"#ccc",cursor:"pointer",fontSize:12,fontFamily:"monospace"}}>{label}</button>
+                  ))}
+                </div>
+              </>
+            )}
+
+            {tab==="csv"&&(
+              <>
+                <div style={{fontSize:9,color:"#444",letterSpacing:1,marginBottom:7}}>PASTE CSV <span style={{color:"#2a2a3e"}}>(first row: Label,Value)</span></div>
+                <textarea value={csvText} onChange={e=>setCsvText(e.target.value)}
+                  placeholder={"Label,Value\nApple,45\nGoogle,30\nMeta,25"}
+                  style={{width:"100%",minHeight:130,background:"#070710",border:"1px solid #1e1e2e",borderRadius:6,color:"#e0e0e0",padding:"9px 11px",fontSize:16,fontFamily:"monospace",resize:"none",boxSizing:"border-box",outline:"none",WebkitUserSelect:"text",userSelect:"text",touchAction:"manipulation",position:"relative",zIndex:10}}/>
+                <div style={{display:"flex",gap:8,marginTop:10,alignItems:"center",flexWrap:"wrap"}}>
+                  <button onClick={handleCSV} style={{padding:"9px 20px",borderRadius:6,background:"linear-gradient(135deg,#627EEA,#26A17B)",color:"#fff",border:"none",cursor:"pointer",fontSize:12,fontFamily:"monospace",fontWeight:700}}>→ Review Data</button>
+                  <button onClick={()=>{setCsvText("");setCsvError("");}} style={{padding:"9px 12px",borderRadius:6,background:"transparent",border:"1px solid #2a2a3e",color:"#555",cursor:"pointer",fontSize:11,fontFamily:"monospace"}}>✕ Clear</button>
+                  {csvError&&<span style={{color:"#E84142",fontSize:10}}>{csvError}</span>}
+                </div>
+              </>
+            )}
+
+            {tab==="prompt"&&(
+              <>
+                {/* API key */}
+                <div style={{background:"#12121e",border:"1px solid #2a2a3e",borderRadius:8,padding:12,marginBottom:8}}>
+                  <div style={{fontSize:9,letterSpacing:1,marginBottom:8,fontWeight:700,color:"#888"}}>⚙ ANTHROPIC API KEY {keySaved?<span style={{color:"#26A17B"}}>· saved</span>:<span style={{color:"#E67E22"}}>· not set</span>}</div>
+                  <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+                    <input type="password" value={apiKey} onChange={e=>{setApiKey(e.target.value);setKeySaved(false);}} placeholder="sk-ant-..."
+                      style={{flex:1,minWidth:170,background:"#070710",border:"1px solid #2a2a3e",borderRadius:6,color:"#e0e0e0",padding:"9px 11px",fontSize:14,fontFamily:"monospace",outline:"none",boxSizing:"border-box"}}/>
+                    <button onClick={saveKey} style={{padding:"9px 16px",borderRadius:6,background:keySaved?"#0d1a12":"#1e1e2e",border:`1px solid ${keySaved?"#26A17B":"#2a2a3e"}`,color:keySaved?"#26A17B":"#ccc",cursor:"pointer",fontSize:12,fontFamily:"monospace",fontWeight:700}}>{keySaved?"✓ Saved":"Save"}</button>
+                    {(apiKey||keySaved)&&<button onClick={clearKey} style={{padding:"9px 12px",borderRadius:6,background:"transparent",border:"1px solid #2a2a3e",color:"#555",cursor:"pointer",fontSize:11,fontFamily:"monospace"}}>Clear</button>}
+                  </div>
+                  <div style={{fontSize:10,color:"#555",marginTop:8,lineHeight:1.5}}>Stored only in this browser, sent directly to Anthropic. Pay-per-use (not your Claude.ai subscription). Get a key at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer" style={{color:"#627EEA"}}>console.anthropic.com</a>.</div>
+                </div>
+
+                {/* Step 1 */}
+                <div style={{background:"#12121e",border:"1px solid #2a2a3e",borderRadius:8,padding:12,marginBottom:4}}>
+                  <div style={{fontSize:9,color:"#F7931A",letterSpacing:1,marginBottom:8,fontWeight:700}}>① DESCRIBE WHAT DATA YOU WANT</div>
+                  <textarea value={promptText} onChange={e=>setPromptText(e.target.value)}
+                    placeholder={"e.g. 10-year treasury yield by year 1945–2024"}
+                    style={{width:"100%",minHeight:70,background:"#070710",border:"1px solid #627EEA",borderRadius:6,color:"#e0e0e0",padding:"9px 11px",fontSize:16,fontFamily:"monospace",resize:"none",boxSizing:"border-box",outline:"none",WebkitUserSelect:"text",userSelect:"text",touchAction:"manipulation",position:"relative",zIndex:10}}/>
+                  <button onClick={handleGenerate} disabled={generating} style={{marginTop:10,padding:"11px 22px",borderRadius:6,background:generating?"#1a1000":"linear-gradient(135deg,#627EEA,#26A17B)",border:"none",color:"#fff",cursor:generating?"default":"pointer",fontSize:13,fontFamily:"monospace",fontWeight:700,width:"100%",opacity:generating?0.8:1}}>
+                    {generating?"⏳ Asking Claude…":"✨ Generate with Claude (auto)"}
+                  </button>
+                  {genError&&<div style={{marginTop:8,color:"#E84142",fontSize:11,lineHeight:1.5}}>{genError}</div>}
+                  <button onClick={copyPrompt} style={{marginTop:8,padding:"8px 16px",borderRadius:6,background:"transparent",border:`1px solid ${promptCopied?"#26A17B":"#2a2a3e"}`,color:promptCopied?"#26A17B":"#888",cursor:"pointer",fontSize:11,fontFamily:"monospace",width:"100%"}}>
+                    {promptCopied?"✓ Copied — paste into Claude chat, then paste its reply below":"📋 Or copy a prompt to run manually in Claude chat"}
+                  </button>
+                </div>
+
+                {/* Divider */}
+                <div style={{display:"flex",alignItems:"center",gap:8,margin:"10px 0"}}>
+                  <div style={{flex:1,height:1,background:"#1e1e2e"}}/>
+                  <div style={{fontSize:10,color:"#444"}}>manual fallback — paste a CSV reply below</div>
+                  <div style={{flex:1,height:1,background:"#1e1e2e"}}/>
+                </div>
+
+                {/* Step 2 */}
+                <div style={{background:"#12121e",border:"1px solid #2a2a3e",borderRadius:8,padding:12}}>
+                  <div style={{fontSize:9,color:"#26A17B",letterSpacing:1,marginBottom:4,fontWeight:700}}>② PASTE CLAUDE'S CSV REPLY HERE</div>
+                  <div style={{fontSize:10,color:"#444",marginBottom:8}}>Should start with: <span style={{color:"#666"}}>Label,Value</span></div>
+                  <textarea value={csvText} onChange={e=>setCsvText(e.target.value)}
+                    placeholder={"Label,Value\n1928,3.09\n1933,3.31\n1938,2.56\n..."}
+                    style={{width:"100%",minHeight:130,background:"#070710",border:"1px solid #26A17B44",borderRadius:6,color:"#e0e0e0",padding:"9px 11px",fontSize:14,fontFamily:"monospace",resize:"none",boxSizing:"border-box",outline:"none",WebkitUserSelect:"text",userSelect:"text",touchAction:"manipulation",position:"relative",zIndex:10}}/>
+                  <div style={{display:"flex",gap:8,marginTop:10,flexWrap:"wrap",alignItems:"center"}}>
+                    <button onClick={()=>{setCsvError("");const parsed=parseCSV(csvText);if(!parsed?.length){setCsvError("Doesn't look like CSV — must start with Label,Value header");return;}const csvLines=["Label,Value",...parsed.map(d=>`${d.label},${d.value}`)].join("\n");setPending({title:promptText||"Custom Data",data:parsed,source:null,chartType:"Line",notes:"",csvExport:csvLines});setValidationIssues(validateData(parsed));setSavedCSV(false);setStage(STAGE_REVIEW);}}
+                      style={{flex:1,padding:"11px 16px",borderRadius:6,background:"linear-gradient(135deg,#627EEA,#26A17B)",color:"#fff",border:"none",cursor:"pointer",fontSize:13,fontFamily:"monospace",fontWeight:700}}>
+                      → Review & Graph
+                    </button>
+                    <button onClick={()=>{if(!csvText.trim())return;const blob=new Blob([csvText],{type:"text/csv"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download=(promptText||"data").replace(/[^a-z0-9]/gi,"_").toLowerCase()+".csv";a.click();URL.revokeObjectURL(url);}}
+                      style={{padding:"11px 14px",borderRadius:6,background:"transparent",border:"1px solid #2a2a3e",color:"#888",cursor:"pointer",fontSize:12,fontFamily:"monospace"}}>
+                      ⬇ CSV
+                    </button>
+                    {csvError&&<div style={{width:"100%",marginTop:4,color:"#E84142",fontSize:10}}>{csvError}</div>}
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* ── STAGE 2 ── */}
+        {stage===STAGE_REVIEW&&pending&&(
+          <div style={{background:"#0f0f1a",border:"1px solid #1e1e2e",borderRadius:10,padding:16}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
+              <div>
+                <div style={{fontSize:9,color:"#444",letterSpacing:1,marginBottom:4}}>REVIEW DATA BEFORE GRAPHING</div>
+                <div style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:15,color:"#fff"}}>{pending.title}</div>
+                <Footnote source={pending.source}/>
+              </div>
+              <div style={{fontSize:10,color:"#444",background:"#12121e",padding:"3px 9px",borderRadius:20}}>{pending.data.length} rows</div>
+            </div>
+
+            {/* Validation issues */}
+            {validationIssues.length>0&&(
+              <div style={{marginBottom:12,padding:"10px 12px",background:"#1a1000",border:"1px solid #E67E2244",borderRadius:8}}>
+                <div style={{fontSize:9,color:"#E67E22",fontWeight:700,letterSpacing:1,marginBottom:6}}>⚠ DATA REVIEW NOTES</div>
+                {validationIssues.map((issue,i)=><div key={i} style={{fontSize:11,color:"#E67E22",lineHeight:1.6}}>• {issue}</div>)}
+              </div>
+            )}
+
+            {pending.notes&&<div style={{marginBottom:10,padding:"8px 12px",background:"#0d1220",border:"1px solid #627EEA33",borderRadius:6,fontSize:11,color:"#627EEA"}}>{pending.notes}</div>}
+
+            <DataTable data={pending.data}/>
+
+            {/* CSV preview */}
+            <div style={{marginTop:12}}>
+              <div style={{fontSize:9,color:"#333",letterSpacing:1,marginBottom:5}}>RAW CSV</div>
+              <pre style={{background:"#070710",border:"1px solid #111",borderRadius:6,padding:"8px 10px",fontSize:10,color:"#555",overflowX:"auto",maxHeight:100,margin:0}}>{pending.csvExport}</pre>
+            </div>
+
+            <div style={{display:"flex",gap:8,marginTop:14,flexWrap:"wrap"}}>
+              <button onClick={handleApprove} style={{padding:"10px 20px",borderRadius:6,background:"linear-gradient(135deg,#F7931A,#E84142)",color:"#fff",border:"none",cursor:"pointer",fontSize:12,fontFamily:"monospace",fontWeight:700}}>✦ Graph This →</button>
+              <button onClick={handleSaveCSV} style={{padding:"10px 14px",borderRadius:6,background:savedCSV?"#0d1a12":"transparent",border:`1px solid ${savedCSV?"#26A17B":"#2a2a3e"}`,color:savedCSV?"#26A17B":"#888",cursor:"pointer",fontSize:11,fontFamily:"monospace"}}>
+                {savedCSV?"✓ Saved":"⬇ Save CSV"}
+              </button>
+              <button onClick={reset} style={{padding:"10px 14px",borderRadius:6,background:"transparent",border:"1px solid #2a2a3e",color:"#555",cursor:"pointer",fontSize:11,fontFamily:"monospace"}}>← Back</button>
+            </div>
+          </div>
+        )}
+
+        {/* ── STAGE 3 ── */}
+        {stage===STAGE_CHART&&chartData&&(
+          <>
+            <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+              <span style={{fontSize:9,color:"#444",letterSpacing:1,marginRight:2}}>CHART TYPE</span>
+              {CHART_TYPES.map(t=><button key={t} onClick={()=>{setChartType(t);setAnimKey(k=>k+1);}} style={chartBtn(t)}>{t}</button>)}
+              <button onClick={()=>setStage(STAGE_REVIEW)} style={{marginLeft:"auto",padding:"6px 12px",borderRadius:6,background:"transparent",border:"1px solid #2a2a3e",color:"#555",cursor:"pointer",fontSize:10,fontFamily:"monospace"}}>← Back</button>
+            </div>
+
+            {/* Edit & format — applies to live chart + GIF export */}
+            <div style={{background:"#0f0f1a",border:"1px solid #1e1e2e",borderRadius:10,padding:12}}>
+              <div style={{fontSize:9,color:"#444",letterSpacing:1,marginBottom:8}}>EDIT &amp; FORMAT</div>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                <label style={{display:"flex",flexDirection:"column",gap:3,flex:2,minWidth:160}}>
+                  <span style={{fontSize:8,color:"#555",letterSpacing:1,fontWeight:700}}>TITLE</span>
+                  <input value={editTitle} onChange={e=>setEditTitle(e.target.value)} placeholder="Chart title"
+                    style={{background:"#070710",border:"1px solid #2a2a3e",borderRadius:6,color:"#e0e0e0",padding:"7px 9px",fontSize:13,fontFamily:"monospace",outline:"none",boxSizing:"border-box"}}/>
+                </label>
+                {(chartType==="Bar"||chartType==="Line")&&<>
+                  <label style={{display:"flex",flexDirection:"column",gap:3,flex:1,minWidth:110}}>
+                    <span style={{fontSize:8,color:"#555",letterSpacing:1,fontWeight:700}}>X-AXIS</span>
+                    <input value={axisX} onChange={e=>setAxisX(e.target.value)} placeholder="e.g. Year"
+                      style={{background:"#070710",border:"1px solid #2a2a3e",borderRadius:6,color:"#e0e0e0",padding:"7px 9px",fontSize:13,fontFamily:"monospace",outline:"none",boxSizing:"border-box"}}/>
+                  </label>
+                  <label style={{display:"flex",flexDirection:"column",gap:3,flex:1,minWidth:110}}>
+                    <span style={{fontSize:8,color:"#555",letterSpacing:1,fontWeight:700}}>Y-AXIS</span>
+                    <input value={axisY} onChange={e=>setAxisY(e.target.value)} placeholder="e.g. % Rate"
+                      style={{background:"#070710",border:"1px solid #2a2a3e",borderRadius:6,color:"#e0e0e0",padding:"7px 9px",fontSize:13,fontFamily:"monospace",outline:"none",boxSizing:"border-box"}}/>
+                  </label>
+                </>}
+              </div>
+              {(chartType==="Bar"||chartType==="Line")&&(
+                <div style={{display:"flex",gap:16,flexWrap:"wrap",alignItems:"center",marginTop:10}}>
+                  <label style={{display:"flex",alignItems:"center",gap:6}}>
+                    <span style={{fontSize:8,color:"#555",letterSpacing:1,fontWeight:700}}>GRIDLINES</span>
+                    <select value={gridTicks} onChange={e=>setGridTicks(Number(e.target.value))}
+                      style={{background:"#070710",border:"1px solid #2a2a3e",borderRadius:6,color:"#e0e0e0",padding:"5px 7px",fontSize:12,fontFamily:"monospace",outline:"none"}}>
+                      {[3,4,5,6,8].map(n=><option key={n} value={n}>{n}</option>)}
+                    </select>
+                  </label>
+                  <label style={{display:"flex",alignItems:"center",gap:6}}>
+                    <span style={{fontSize:8,color:"#555",letterSpacing:1,fontWeight:700}}>VALUES</span>
+                    <select value={valueMode} onChange={e=>setValueMode(e.target.value)}
+                      style={{background:"#070710",border:"1px solid #2a2a3e",borderRadius:6,color:"#e0e0e0",padding:"5px 7px",fontSize:12,fontFamily:"monospace",outline:"none"}}>
+                      <option value="auto">Auto</option><option value="on">On</option><option value="off">Off</option>
+                    </select>
+                  </label>
+                  {chartType==="Line"&&<label style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer"}}>
+                    <input type="checkbox" checked={incZero} onChange={e=>setIncZero(e.target.checked)} style={{accentColor:"#F7931A"}}/>
+                    <span style={{fontSize:8,color:"#555",letterSpacing:1,fontWeight:700}}>INCLUDE&nbsp;ZERO</span>
+                  </label>}
+                  {chartType==="Line"&&<label style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer"}}>
+                    <input type="checkbox" checked={smooth} onChange={e=>setSmooth(e.target.checked)} style={{accentColor:"#F7931A"}}/>
+                    <span style={{fontSize:8,color:"#555",letterSpacing:1,fontWeight:700}}>SMOOTH</span>
+                  </label>}
+                  <label style={{display:"flex",alignItems:"center",gap:5}}>
+                    <span style={{fontSize:8,color:"#555",letterSpacing:1,fontWeight:700}}>Y&nbsp;MIN</span>
+                    <input type="number" value={yMin} onChange={e=>setYMin(e.target.value)} placeholder="auto"
+                      style={{width:56,background:"#070710",border:"1px solid #2a2a3e",borderRadius:6,color:"#e0e0e0",padding:"5px 6px",fontSize:12,fontFamily:"monospace",outline:"none"}}/>
+                  </label>
+                  <label style={{display:"flex",alignItems:"center",gap:5}}>
+                    <span style={{fontSize:8,color:"#555",letterSpacing:1,fontWeight:700}}>Y&nbsp;MAX</span>
+                    <input type="number" value={yMax} onChange={e=>setYMax(e.target.value)} placeholder="auto"
+                      style={{width:56,background:"#070710",border:"1px solid #2a2a3e",borderRadius:6,color:"#e0e0e0",padding:"5px 6px",fontSize:12,fontFamily:"monospace",outline:"none"}}/>
+                  </label>
+                </div>
+              )}
+              <div style={{display:"flex",gap:16,flexWrap:"wrap",alignItems:"center",marginTop:10}}>
+                <label style={{display:"flex",alignItems:"center",gap:6}}>
+                  <span style={{fontSize:8,color:"#555",letterSpacing:1,fontWeight:700}}>THEME</span>
+                  <select value={theme} onChange={e=>setTheme(e.target.value)}
+                    style={{background:"#070710",border:"1px solid #2a2a3e",borderRadius:6,color:"#e0e0e0",padding:"5px 7px",fontSize:12,fontFamily:"monospace",outline:"none"}}>
+                    <option value="dark">Dark</option><option value="light">Light (for slides)</option>
+                  </select>
+                </label>
+                <label style={{display:"flex",alignItems:"center",gap:6}}>
+                  <span style={{fontSize:8,color:"#555",letterSpacing:1,fontWeight:700}}>COLORS</span>
+                  <select value={palette} onChange={e=>setPalette(e.target.value)}
+                    style={{background:"#070710",border:"1px solid #2a2a3e",borderRadius:6,color:"#e0e0e0",padding:"5px 7px",fontSize:12,fontFamily:"monospace",outline:"none"}}>
+                    {Object.keys(PALETTES).map(p=><option key={p} value={p}>{p}</option>)}
+                  </select>
+                </label>
+              </div>
+              {(chartType==="Pie"||chartType==="Donut")&&<div style={{fontSize:10,color:"#555",marginTop:8}}>Axis labels and gridlines don't apply to pie / donut charts.</div>}
+            </div>
+
+            <div style={{background:"#0f0f1a",border:"1px solid #1e1e2e",borderRadius:12,padding:"20px 14px",textAlign:"center"}}>
+              <div style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:15,color:"#fff",marginBottom:3}}>{editTitle||chartData.title}</div>
+              <div style={{fontSize:9,color:"#333",marginBottom:16,letterSpacing:1}}>{chartType.toUpperCase()} · {chartData.data.length} ITEMS</div>
+              <div style={{display:"flex",justifyContent:"center"}}>{renderChart(chartData.data)}</div>
+              {chartType!=="Line"&&chartData.data.length<=10&&<Legend data={chartData.data}/>}
+              <div style={{display:"flex",gap:8,justifyContent:"center",marginTop:12,flexWrap:"wrap"}}>
+                <button onClick={()=>setAnimKey(k=>k+1)} style={{padding:"6px 14px",background:"transparent",border:"1px solid #1e1e2e",color:"#555",borderRadius:6,cursor:"pointer",fontSize:10,fontFamily:"monospace"}}>↺ Replay</button>
+                <button onClick={handleSaveCSV} style={{padding:"6px 14px",background:"transparent",border:`1px solid ${savedCSV?"#26A17B":"#2a2a3e"}`,color:savedCSV?"#26A17B":"#666",borderRadius:6,cursor:"pointer",fontSize:10,fontFamily:"monospace"}}>{savedCSV?"✓ CSV Saved":"⬇ Save CSV"}</button>
+                <button onClick={savePng} disabled={pngBusy} style={{padding:"6px 14px",background:"transparent",border:"1px solid #627EEA",color:"#627EEA",borderRadius:6,cursor:pngBusy?"default":"pointer",fontSize:10,fontFamily:"monospace",fontWeight:700,opacity:pngBusy?0.6:1}}>{pngBusy?"⏳ …":"🖼 Save PNG"}</button>
+                <button onClick={saveGif} disabled={gifBusy} style={{padding:"6px 14px",background:gifBusy?"#1a1000":"linear-gradient(135deg,#F7931A,#E84142)",border:"none",color:"#fff",borderRadius:6,cursor:gifBusy?"default":"pointer",fontSize:10,fontFamily:"monospace",fontWeight:700,opacity:gifBusy?0.8:1}}>{gifBusy?`⏳ Encoding ${gifPct}%`:"🎞 Save GIF (animated)"}</button>
+                <button onClick={reset} style={{padding:"6px 14px",background:"transparent",border:"1px solid #2a2a3e",color:"#555",borderRadius:6,cursor:"pointer",fontSize:10,fontFamily:"monospace"}}>＋ New Chart</button>
+              </div>
+              <Footnote source={chartData.source}/>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<DataVizStudio11 />);
+  </script>
+</body>
+</html>
