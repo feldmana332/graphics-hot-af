@@ -260,6 +260,15 @@ function loadScriptOnce(src){
     document.head.appendChild(el);
   });
 }
+// Easing curves applied to the 0→1 build-up progress (live preview + GIF frames).
+const EASINGS={
+  Linear:t=>t,
+  "Ease out":t=>1-Math.pow(1-t,3),
+  "Ease in":t=>t*t*t,
+  "Ease in-out":t=>t<0.5?4*t*t*t:1-Math.pow(-2*t+2,3)/2,
+};
+function easeOf(name){return EASINGS[name]||EASINGS.Linear;}
+
 function drawChart(type,ctx,W,H,data,pv,bg,opts){
   if(type==="Pie")drawPie(ctx,W,H,data,pv,false,bg,opts);
   else if(type==="Donut")drawPie(ctx,W,H,data,pv,true,bg,opts);
@@ -274,9 +283,10 @@ function useChartAnim(type,data,animKey,opts){
   // Light theme needs a solid canvas fill; dark theme stays transparent over the card.
   const liveBg=()=>opts&&opts.theme==="light"?THEME_LIGHT.bg:null;
   useEffect(()=>{p.current=0;cancelAnimationFrame(anim.current);
-    const step=CHART_STEP[type]||0.01;
+    const step=(CHART_STEP[type]||0.01)*((opts&&opts.speed)||1);   // larger step = faster build-up
+    const ease=easeOf(opts&&opts.easing);
     const go=()=>{p.current=Math.min(1,p.current+step);const c=ref.current;
-      if(c)drawChart(type,c.getContext("2d"),c.width,c.height,data,p.current,liveBg(),opts);
+      if(c)drawChart(type,c.getContext("2d"),c.width,c.height,data,ease(p.current),liveBg(),opts);
       if(p.current<1)anim.current=requestAnimationFrame(go);};
     anim.current=requestAnimationFrame(go);return()=>cancelAnimationFrame(anim.current);
   },[animKey,data,type]);
@@ -347,9 +357,13 @@ async function exportChartGif(chartData,chartType,onProgress,fmt,scale){
     const txt=await fetch("https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.worker.js").then(r=>r.text());
     workerScript=URL.createObjectURL(new Blob([txt],{type:"application/javascript"}));
   }catch(e){throw new Error("Couldn't load the GIF encoder — needs internet the first time.");}
-  const gif=new window.GIF({workers:2,quality:8,width:L.W*S,height:L.H*S,workerScript,repeat:-1});
+  const loop=!fmt||fmt.loop!==false;                          // default: loop forever
+  const holdMs=fmt&&fmt.hold!=null?fmt.hold:2000;             // pause on the finished frame
+  const frameDelay=Math.max(20,Math.round(55/((fmt&&fmt.speed)||1)));
+  const ease=easeOf(fmt&&fmt.easing);
+  const gif=new window.GIF({workers:2,quality:8,width:L.W*S,height:L.H*S,workerScript,repeat:loop?0:-1});
   const N=40;
-  for(let i=0;i<=N;i++){composeChart(ctx,L,chartData,chartType,i/N);gif.addFrame(ctx,{copy:true,delay:i===N?2200:55});}
+  for(let i=0;i<=N;i++){composeChart(ctx,L,chartData,chartType,ease(i/N));gif.addFrame(ctx,{copy:true,delay:i===N?holdMs:frameDelay});}
   return await new Promise((resolve,reject)=>{
     gif.on("progress",p=>onProgress&&onProgress(Math.round(p*100)));
     gif.on("finished",blob=>{URL.revokeObjectURL(workerScript);resolve(blob);});
@@ -550,6 +564,10 @@ function DataVizStudio11(){
   const [pieLabels,setPieLabels]=useState("percent");  // percent | value | both | none
   const [aspect,setAspect]=useState("Auto");           // Auto | 1:1 | 4:3 | 16:9 | 9:16
   const [scale,setScale]=useState(3);                  // PNG/clipboard pixel multiplier
+  const [speed,setSpeed]=useState(1);                  // build-up speed multiplier (live + GIF)
+  const [easing,setEasing]=useState("Ease out");       // animation easing curve
+  const [gifLoop,setGifLoop]=useState(true);           // loop the exported GIF forever
+  const [gifHold,setGifHold]=useState(2000);           // ms pause on the finished GIF frame
   const [pngBusy,setPngBusy]=useState(false);
   const [svgBusy,setSvgBusy]=useState(false);
   const [copyState,setCopyState]=useState("");         // "" | done | error
@@ -623,13 +641,15 @@ function DataVizStudio11(){
     setTheme("dark"); setPalette("Default"); setSmooth(false); setYMin(""); setYMax("");
     setMaxSlices(0); setShowLegend(true); setPieLabels("percent");
     setAspect("Auto"); setScale(3); setCopyState("");
+    setSpeed(1); setEasing("Ease out"); setGifLoop(true); setGifHold(2000);
     setAnimKey(k=>k+1); setStage(STAGE_CHART);
   };
 
   const chartOpts={xLabel:axisX,yLabel:axisY,includeZero:incZero,maxTicks:gridTicks,valueLabels:valueMode,
-    theme,colors:PALETTES[palette]||COLORS,smooth,yMin,yMax,pieLabels};
+    theme,colors:PALETTES[palette]||COLORS,smooth,yMin,yMax,pieLabels,speed,easing};
   const exportFmt=()=>({title:editTitle,xLabel:axisX,yLabel:axisY,includeZero:incZero,maxTicks:gridTicks,
-    valueLabels:valueMode,theme,palette,smooth,yMin,yMax,maxSlices,showLegend,pieLabels,aspect});
+    valueLabels:valueMode,theme,palette,smooth,yMin,yMax,maxSlices,showLegend,pieLabels,aspect,
+    speed,easing,loop:gifLoop,hold:gifHold});
   const fileBase=()=>((editTitle||(chartData&&chartData.title)||"chart").replace(/[^a-z0-9]/gi,"_").toLowerCase());
 
   const isPieType=chartType==="Pie"||chartType==="Donut";
@@ -1000,6 +1020,34 @@ function DataVizStudio11(){
                   </select>
                 </label>
                 {exportLayout&&<span style={{fontSize:9,color:"#444"}}>PNG/copy ≈ {exportLayout.W*scale}×{exportLayout.H*scale}px · GIF capped at 2×</span>}
+              </div>
+              <div style={{display:"flex",gap:16,flexWrap:"wrap",alignItems:"center",marginTop:10}}>
+                <label style={{display:"flex",alignItems:"center",gap:6}}>
+                  <span style={{fontSize:8,color:"#555",letterSpacing:1,fontWeight:700}}>SPEED</span>
+                  <input type="range" min={0.5} max={3} step={0.25} value={speed}
+                    onChange={e=>setSpeed(Number(e.target.value))}
+                    onMouseUp={()=>setAnimKey(k=>k+1)} onTouchEnd={()=>setAnimKey(k=>k+1)} onKeyUp={()=>setAnimKey(k=>k+1)}
+                    style={{accentColor:"#F7931A",width:90}}/>
+                  <span style={{fontSize:10,color:"#888",minWidth:30}}>{speed}×</span>
+                </label>
+                <label style={{display:"flex",alignItems:"center",gap:6}}>
+                  <span style={{fontSize:8,color:"#555",letterSpacing:1,fontWeight:700}}>EASE</span>
+                  <select value={easing} onChange={e=>{setEasing(e.target.value);setAnimKey(k=>k+1);}}
+                    style={{background:"#070710",border:"1px solid #2a2a3e",borderRadius:6,color:"#e0e0e0",padding:"5px 7px",fontSize:12,fontFamily:"monospace",outline:"none"}}>
+                    {Object.keys(EASINGS).map(e=><option key={e} value={e}>{e}</option>)}
+                  </select>
+                </label>
+                <label style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer"}}>
+                  <input type="checkbox" checked={gifLoop} onChange={e=>setGifLoop(e.target.checked)} style={{accentColor:"#F7931A"}}/>
+                  <span style={{fontSize:8,color:"#555",letterSpacing:1,fontWeight:700}}>LOOP&nbsp;GIF</span>
+                </label>
+                <label style={{display:"flex",alignItems:"center",gap:6}}>
+                  <span style={{fontSize:8,color:"#555",letterSpacing:1,fontWeight:700}}>GIF&nbsp;HOLD</span>
+                  <select value={gifHold} onChange={e=>setGifHold(Number(e.target.value))}
+                    style={{background:"#070710",border:"1px solid #2a2a3e",borderRadius:6,color:"#e0e0e0",padding:"5px 7px",fontSize:12,fontFamily:"monospace",outline:"none"}}>
+                    <option value={0}>None</option><option value={1000}>1s</option><option value={2000}>2s</option><option value={3000}>3s</option>
+                  </select>
+                </label>
               </div>
               {(chartType==="Pie"||chartType==="Donut")&&<div style={{fontSize:10,color:"#555",marginTop:8}}>Axis labels and gridlines don't apply to pie / donut charts.</div>}
             </div>
