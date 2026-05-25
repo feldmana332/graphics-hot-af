@@ -134,6 +134,7 @@ function drawAxisTitles(ctx,padL,plotW,padT,plotH,H,xLab,yLab,color){
 function drawPie(ctx,W,H,data,pv,donut,bg,opts){
   const th=themeOf(opts), colors=paletteOf(opts), sep=bg||th.bg;
   const mode=(opts&&opts.pieLabels)||"percent";   // percent | value | both | none
+  const showName=!!(opts&&opts.pieName);           // also draw the category name on the slice
   const total=data.reduce((s,d)=>s+Math.abs(d.value),0)||1;
   const cx=W/2,cy=H/2,r=Math.min(W,H)*0.38,inner=donut?r*0.52:0;
   if(bg){ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);}else ctx.clearRect(0,0,W,H);
@@ -143,19 +144,21 @@ function drawPie(ctx,W,H,data,pv,donut,bg,opts){
     ctx.beginPath();ctx.moveTo(cx,cy);ctx.arc(cx,cy,r,a,end);
     if(donut)ctx.arc(cx,cy,inner,end,a,true);else ctx.lineTo(cx,cy);
     ctx.fillStyle=colors[i%colors.length];ctx.fill();ctx.strokeStyle=sep;ctx.lineWidth=2;ctx.stroke();
-    sl.push({mid:a+sw/2,sw,pct:((Math.abs(item.value)/total)*100).toFixed(1),val:Math.abs(item.value)});a=end;
+    sl.push({mid:a+sw/2,sw,pct:((Math.abs(item.value)/total)*100).toFixed(1),val:Math.abs(item.value),label:item.label});a=end;
   });
-  if(mode!=="none"&&pv>0.85){const al=Math.min(1,(pv-0.85)/0.15);
-    const big=Math.max(9,r*0.09), small=Math.max(8,r*0.075);
-    sl.forEach(({mid,sw,pct,val})=>{if(sw<0.18)return;const lr=donut?(r+inner)/2:r*0.68;
-      const px=cx+Math.cos(mid)*lr, py=cy+Math.sin(mid)*lr;
+  if((showName||mode!=="none")&&pv>0.85){const al=Math.min(1,(pv-0.85)/0.15);
+    sl.forEach(({mid,sw,pct,val,label})=>{if(sw<0.18)return;
+      const lines=[];
+      if(showName) lines.push((label&&label.length>11)?label.slice(0,10)+"…":(label||""));
+      if(mode==="percent") lines.push(pct+"%");
+      else if(mode==="value") lines.push(fmtNum(val));
+      else if(mode==="both"){ lines.push(fmtNum(val)); lines.push(pct+"%"); }
+      if(!lines.length) return;
+      const n=lines.length, f=Math.max(7, r*(n>=3?0.062:n===2?0.072:0.09)), lh=f*1.18;
+      const lr=donut?(r+inner)/2:r*0.68, px=cx+Math.cos(mid)*lr, py=cy+Math.sin(mid)*lr;
       ctx.globalAlpha=al;ctx.fillStyle=th.pct;ctx.textAlign="center";ctx.textBaseline="middle";
-      if(mode==="both"){
-        ctx.font=`bold ${big}px monospace`;ctx.fillText(fmtNum(val),px,py-big*0.5);
-        ctx.font=`${small}px monospace`;ctx.fillText(pct+"%",px,py+big*0.5);
-      }else{
-        ctx.font=`bold ${big}px monospace`;ctx.fillText(mode==="value"?fmtNum(val):pct+"%",px,py);
-      }
+      ctx.font=`bold ${f}px monospace`;
+      lines.forEach((t,i)=>ctx.fillText(t,px,py+(i-(n-1)/2)*lh));
       ctx.globalAlpha=1;
     });
   }
@@ -319,9 +322,9 @@ function chartLayout(chartData,chartType,fmt){
   const isPie=chartType==="Pie"||chartType==="Donut";
   const plotData=isPie?limitSlices(chartData.data,fmt.maxSlices):chartData.data;
   const axisOpts={xLabel:fmt.xLabel,yLabel:fmt.yLabel,includeZero:fmt.includeZero,maxTicks:fmt.maxTicks,
-    valueLabels:fmt.valueLabels,smooth:fmt.smooth,yMin:fmt.yMin,yMax:fmt.yMax,theme:fmt.theme,colors,pieLabels:fmt.pieLabels};
+    valueLabels:fmt.valueLabels,smooth:fmt.smooth,yMin:fmt.yMin,yMax:fmt.yMax,theme:fmt.theme,colors,pieLabels:fmt.pieLabels,pieName:fmt.pieName};
   const cd=chartDims(chartType,fmt.aspect), titleH=46;
-  const legend=(isPie&&fmt.showLegend!==false&&plotData.length<=16)?plotData:null;
+  const legend=(isPie&&plotData.length<=40)?plotData:null;   // pie/donut: legend of names always shown
   const legendH=legend?Math.ceil(legend.length/3)*20+12:0;
   const srcText=chartData.source&&chartData.source.name?("Source: "+chartData.source.name):null;
   const sourceH=srcText?22:0;
@@ -562,6 +565,7 @@ function DataVizStudio11(){
   const [maxSlices,setMaxSlices]=useState(0);          // 0 = show all slices (pie/donut)
   const [showLegend,setShowLegend]=useState(true);
   const [pieLabels,setPieLabels]=useState("percent");  // percent | value | both | none
+  const [pieName,setPieName]=useState(false);          // show the category name on each slice
   const [aspect,setAspect]=useState("Auto");           // Auto | 1:1 | 4:3 | 16:9 | 9:16
   const [scale,setScale]=useState(3);                  // PNG/clipboard pixel multiplier
   const [speed,setSpeed]=useState(1);                  // build-up speed multiplier (live + GIF)
@@ -639,16 +643,16 @@ function DataVizStudio11(){
     setEditTitle(pending.title||""); setAxisX(pending.xLabel||""); setAxisY(pending.yLabel||"");
     setIncZero(false); setGridTicks(5); setValueMode("auto");
     setTheme("dark"); setPalette("Default"); setSmooth(false); setYMin(""); setYMax("");
-    setMaxSlices(0); setShowLegend(true); setPieLabels("percent");
+    setMaxSlices(0); setShowLegend(true); setPieLabels("percent"); setPieName(false);
     setAspect("Auto"); setScale(3); setCopyState("");
     setSpeed(1); setEasing("Ease out"); setGifLoop(true); setGifHold(2000);
     setAnimKey(k=>k+1); setStage(STAGE_CHART);
   };
 
   const chartOpts={xLabel:axisX,yLabel:axisY,includeZero:incZero,maxTicks:gridTicks,valueLabels:valueMode,
-    theme,colors:PALETTES[palette]||COLORS,smooth,yMin,yMax,pieLabels,speed,easing};
+    theme,colors:PALETTES[palette]||COLORS,smooth,yMin,yMax,pieLabels,pieName,speed,easing};
   const exportFmt=()=>({title:editTitle,xLabel:axisX,yLabel:axisY,includeZero:incZero,maxTicks:gridTicks,
-    valueLabels:valueMode,theme,palette,smooth,yMin,yMax,maxSlices,showLegend,pieLabels,aspect,
+    valueLabels:valueMode,theme,palette,smooth,yMin,yMax,maxSlices,showLegend,pieLabels,pieName,aspect,
     speed,easing,loop:gifLoop,hold:gifHold});
   const fileBase=()=>((editTitle||(chartData&&chartData.title)||"chart").replace(/[^a-z0-9]/gi,"_").toLowerCase());
 
@@ -976,11 +980,15 @@ function DataVizStudio11(){
                     </select>
                   </label>
                   <label style={{display:"flex",alignItems:"center",gap:6}}>
-                    <span style={{fontSize:8,color:"#555",letterSpacing:1,fontWeight:700}}>LABELS</span>
+                    <span style={{fontSize:8,color:"#555",letterSpacing:1,fontWeight:700}}>ON&nbsp;SLICE</span>
                     <select value={pieLabels} onChange={e=>setPieLabels(e.target.value)}
                       style={{background:"#070710",border:"1px solid #2a2a3e",borderRadius:6,color:"#e0e0e0",padding:"5px 7px",fontSize:12,fontFamily:"monospace",outline:"none"}}>
-                      <option value="percent">%</option><option value="value">Value</option><option value="both">Both</option><option value="none">None</option>
+                      <option value="none">None</option><option value="percent">%</option><option value="value">Number</option><option value="both">Number + %</option>
                     </select>
+                  </label>
+                  <label style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer"}}>
+                    <input type="checkbox" checked={pieName} onChange={e=>setPieName(e.target.checked)} style={{accentColor:"#F7931A"}}/>
+                    <span style={{fontSize:8,color:"#555",letterSpacing:1,fontWeight:700}}>NAME&nbsp;ON&nbsp;SLICE</span>
                   </label>
                 </div>
               )}
@@ -999,7 +1007,7 @@ function DataVizStudio11(){
                     {Object.keys(PALETTES).map(p=><option key={p} value={p}>{p}</option>)}
                   </select>
                 </label>
-                {chartType!=="Line"&&<label style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer"}}>
+                {chartType==="Bar"&&<label style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer"}}>
                   <input type="checkbox" checked={showLegend} onChange={e=>setShowLegend(e.target.checked)} style={{accentColor:"#F7931A"}}/>
                   <span style={{fontSize:8,color:"#555",letterSpacing:1,fontWeight:700}}>LEGEND</span>
                 </label>}
@@ -1049,14 +1057,14 @@ function DataVizStudio11(){
                   </select>
                 </label>
               </div>
-              {(chartType==="Pie"||chartType==="Donut")&&<div style={{fontSize:10,color:"#555",marginTop:8}}>Axis labels and gridlines don't apply to pie / donut charts.</div>}
+              {(chartType==="Pie"||chartType==="Donut")&&<div style={{fontSize:10,color:"#555",marginTop:8}}>The legend of category names is always shown below. "On slice" adds numbers/% on the chart; tick "Name on slice" to label slices directly. Axis labels and gridlines don't apply to pie / donut.</div>}
             </div>
 
             <div style={{background:"#0f0f1a",border:"1px solid #1e1e2e",borderRadius:12,padding:"20px 14px",textAlign:"center"}}>
               <div style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:15,color:"#fff",marginBottom:3}}>{editTitle||chartData.title}</div>
               <div style={{fontSize:9,color:"#333",marginBottom:16,letterSpacing:1}}>{chartType.toUpperCase()} · {chartData.data.length} ITEMS</div>
               <div style={{display:"flex",justifyContent:"center"}}>{renderChart(displayData)}</div>
-              {showLegend&&chartType!=="Line"&&displayData.length<=16&&<Legend data={displayData} colors={PALETTES[palette]||COLORS}/>}
+              {(isPieType||(chartType==="Bar"&&showLegend))&&displayData.length<=40&&<Legend data={displayData} colors={PALETTES[palette]||COLORS}/>}
               <div style={{display:"flex",gap:8,justifyContent:"center",marginTop:12,flexWrap:"wrap"}}>
                 <button onClick={()=>setAnimKey(k=>k+1)} style={{padding:"6px 14px",background:"transparent",border:"1px solid #1e1e2e",color:"#555",borderRadius:6,cursor:"pointer",fontSize:10,fontFamily:"monospace"}}>↺ Replay</button>
                 <button onClick={handleSaveCSV} style={{padding:"6px 14px",background:"transparent",border:`1px solid ${savedCSV?"#26A17B":"#2a2a3e"}`,color:savedCSV?"#26A17B":"#666",borderRadius:6,cursor:"pointer",fontSize:10,fontFamily:"monospace"}}>{savedCSV?"✓ CSV Saved":"⬇ Save CSV"}</button>
