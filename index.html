@@ -21,7 +21,7 @@
   <div id="root"></div>
 
   <script type="text/babel" data-presets="react">
-const { useState, useRef, useEffect, useCallback } = React;
+const { useState, useRef, useEffect, useCallback, useMemo } = React;
 
 const CHART_TYPES = ["Pie","Donut","Bar","Line"];
 const COLORS = ["#F7931A","#627EEA","#26A17B","#E84142","#9B59B6","#3498DB","#E67E22","#2ECC71","#E91E63","#00BCD4","#FF5722","#8BC34A","#FFC107","#795548","#607D8B"];
@@ -96,6 +96,17 @@ const THEME_LIGHT={bg:"#ffffff",grid:"#e5e5ea",tick:"#888",axisLabel:"#555",axis
 function themeOf(opts){return opts&&opts.theme==="light"?THEME_LIGHT:THEME_DARK;}
 function paletteOf(opts){return (opts&&opts.colors)||COLORS;}
 
+// Pie/donut: keep the `maxN` largest slices (original order) and roll the rest into a
+// single "Other" slice. maxN of 0/null (or fewer rows than the cap) means "show all".
+function limitSlices(data,maxN){
+  if(!maxN||!data||data.length<=maxN) return data||[];
+  const rank=data.map((d,i)=>i).sort((x,y)=>Math.abs(data[y].value)-Math.abs(data[x].value));
+  const keep=new Set(rank.slice(0,maxN-1));
+  const top=data.filter((d,i)=>keep.has(i));
+  const otherVal=data.reduce((s,d,i)=>keep.has(i)?s:s+Math.abs(d.value),0);
+  return [...top,{label:"Other",value:otherVal}];
+}
+
 // Axis range/ticks honoring include-zero and manual min/max overrides.
 function buildAxis(dataMin,dataMax,opts){
   opts=opts||{};
@@ -122,7 +133,8 @@ function drawAxisTitles(ctx,padL,plotW,padT,plotH,H,xLab,yLab,color){
 
 function drawPie(ctx,W,H,data,pv,donut,bg,opts){
   const th=themeOf(opts), colors=paletteOf(opts), sep=bg||th.bg;
-  const total=data.reduce((s,d)=>s+Math.abs(d.value),0);
+  const mode=(opts&&opts.pieLabels)||"percent";   // percent | value | both | none
+  const total=data.reduce((s,d)=>s+Math.abs(d.value),0)||1;
   const cx=W/2,cy=H/2,r=Math.min(W,H)*0.38,inner=donut?r*0.52:0;
   if(bg){ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);}else ctx.clearRect(0,0,W,H);
   let a=-Math.PI/2;const sl=[];
@@ -131,13 +143,20 @@ function drawPie(ctx,W,H,data,pv,donut,bg,opts){
     ctx.beginPath();ctx.moveTo(cx,cy);ctx.arc(cx,cy,r,a,end);
     if(donut)ctx.arc(cx,cy,inner,end,a,true);else ctx.lineTo(cx,cy);
     ctx.fillStyle=colors[i%colors.length];ctx.fill();ctx.strokeStyle=sep;ctx.lineWidth=2;ctx.stroke();
-    sl.push({mid:a+sw/2,sw,pct:((Math.abs(item.value)/total)*100).toFixed(1)});a=end;
+    sl.push({mid:a+sw/2,sw,pct:((Math.abs(item.value)/total)*100).toFixed(1),val:Math.abs(item.value)});a=end;
   });
-  if(pv>0.85){const al=Math.min(1,(pv-0.85)/0.15);
-    sl.forEach(({mid,sw,pct})=>{if(sw<0.18)return;const lr=donut?(r+inner)/2:r*0.68;
-      ctx.globalAlpha=al;ctx.font=`bold ${Math.max(9,r*0.09)}px monospace`;
-      ctx.fillStyle=th.pct;ctx.textAlign="center";ctx.textBaseline="middle";
-      ctx.fillText(`${pct}%`,cx+Math.cos(mid)*lr,cy+Math.sin(mid)*lr);ctx.globalAlpha=1;
+  if(mode!=="none"&&pv>0.85){const al=Math.min(1,(pv-0.85)/0.15);
+    const big=Math.max(9,r*0.09), small=Math.max(8,r*0.075);
+    sl.forEach(({mid,sw,pct,val})=>{if(sw<0.18)return;const lr=donut?(r+inner)/2:r*0.68;
+      const px=cx+Math.cos(mid)*lr, py=cy+Math.sin(mid)*lr;
+      ctx.globalAlpha=al;ctx.fillStyle=th.pct;ctx.textAlign="center";ctx.textBaseline="middle";
+      if(mode==="both"){
+        ctx.font=`bold ${big}px monospace`;ctx.fillText(fmtNum(val),px,py-big*0.5);
+        ctx.font=`${small}px monospace`;ctx.fillText(pct+"%",px,py+big*0.5);
+      }else{
+        ctx.font=`bold ${big}px monospace`;ctx.fillText(mode==="value"?fmtNum(val):pct+"%",px,py);
+      }
+      ctx.globalAlpha=1;
     });
   }
 }
@@ -238,8 +257,8 @@ function useChartAnim(type,data,animKey,opts){
   return ref;
 }
 
-function AnimatedPieChart({data,donut=false,animKey}){
-  const ref=useChartAnim(donut?"Donut":"Pie",data,animKey);
+function AnimatedPieChart({data,donut=false,animKey,opts}){
+  const ref=useChartAnim(donut?"Donut":"Pie",data,animKey,opts);
   return <canvas ref={ref} width={320} height={320} style={{width:"100%",maxWidth:320}}/>;
 }
 
@@ -259,22 +278,24 @@ function chartLayout(chartData,chartType,fmt){
   fmt=fmt||{};
   const th=themeOf(fmt), colors=PALETTES[fmt.palette]||COLORS;
   const title=(fmt.title!=null?fmt.title:chartData.title)||"Chart";
+  const isPie=chartType==="Pie"||chartType==="Donut";
+  const plotData=isPie?limitSlices(chartData.data,fmt.maxSlices):chartData.data;
   const axisOpts={xLabel:fmt.xLabel,yLabel:fmt.yLabel,includeZero:fmt.includeZero,maxTicks:fmt.maxTicks,
-    valueLabels:fmt.valueLabels,smooth:fmt.smooth,yMin:fmt.yMin,yMax:fmt.yMax,theme:fmt.theme,colors};
+    valueLabels:fmt.valueLabels,smooth:fmt.smooth,yMin:fmt.yMin,yMax:fmt.yMax,theme:fmt.theme,colors,pieLabels:fmt.pieLabels};
   const cd=CHART_DIMS[chartType]||CHART_DIMS.Bar, titleH=46;
-  const legend=(chartType==="Pie"||chartType==="Donut")&&chartData.data.length<=12?chartData.data:null;
+  const legend=(isPie&&fmt.showLegend!==false&&plotData.length<=16)?plotData:null;
   const legendH=legend?Math.ceil(legend.length/3)*20+12:0;
   const srcText=chartData.source&&chartData.source.name?("Source: "+chartData.source.name):null;
   const sourceH=srcText?22:0;
-  return {th,colors,title,axisOpts,cd,titleH,legend,legendH,srcText,W:cd.w,H:titleH+cd.h+legendH+sourceH+10};
+  return {th,colors,title,axisOpts,cd,titleH,legend,legendH,plotData,srcText,W:cd.w,H:titleH+cd.h+legendH+sourceH+10};
 }
 // Paint one full frame (bg + title + chart + legend + source) onto ctx at progress pv.
 function composeChart(ctx,L,chartData,chartType,pv){
-  const {th,colors,title,axisOpts,cd,titleH,legend,legendH,W,H,srcText}=L;
+  const {th,colors,title,axisOpts,cd,titleH,legend,legendH,plotData,W,H,srcText}=L;
   ctx.fillStyle=th.bg;ctx.fillRect(0,0,W,H);
   ctx.fillStyle=th.title;ctx.font="bold 16px monospace";ctx.textAlign="center";ctx.textBaseline="middle";
   ctx.fillText(title.length>52?title.slice(0,51)+"…":title,W/2,titleH/2);
-  ctx.save();ctx.translate(0,titleH);drawChart(chartType,ctx,cd.w,cd.h,chartData.data,pv,th.bg,axisOpts);ctx.restore();
+  ctx.save();ctx.translate(0,titleH);drawChart(chartType,ctx,cd.w,cd.h,plotData,pv,th.bg,axisOpts);ctx.restore();
   if(legend){
     ctx.textBaseline="middle";ctx.textAlign="left";ctx.font="11px monospace";
     const colW=W/3,baseY=titleH+cd.h+12;
@@ -318,10 +339,11 @@ async function exportChartPng(chartData,chartType,fmt){
   return await new Promise((resolve,reject)=>{canvas.toBlob(b=>b?resolve(b):reject(new Error("PNG export failed.")),"image/png");});
 }
 
-function Legend({data}){
+function Legend({data,colors}){
+  const pal=colors||COLORS;
   return <div style={{display:"flex",flexWrap:"wrap",gap:"6px 12px",marginTop:12,justifyContent:"center"}}>
     {data.map((d,i)=><div key={i} style={{display:"flex",alignItems:"center",gap:5,fontSize:10,color:"#aaa",fontFamily:"monospace"}}>
-      <div style={{width:8,height:8,borderRadius:2,background:COLORS[i%COLORS.length],flexShrink:0}}/>{d.label}
+      <div style={{width:8,height:8,borderRadius:2,background:pal[i%pal.length],flexShrink:0}}/>{d.label}
     </div>)}
   </div>;
 }
@@ -472,6 +494,9 @@ function DataVizStudio11(){
   const [smooth,setSmooth]=useState(false);
   const [yMin,setYMin]=useState("");
   const [yMax,setYMax]=useState("");
+  const [maxSlices,setMaxSlices]=useState(0);          // 0 = show all slices (pie/donut)
+  const [showLegend,setShowLegend]=useState(true);
+  const [pieLabels,setPieLabels]=useState("percent");  // percent | value | both | none
   const [pngBusy,setPngBusy]=useState(false);
   const [gifBusy,setGifBusy]=useState(false);
   const [gifPct,setGifPct]=useState(0);
@@ -541,14 +566,23 @@ function DataVizStudio11(){
     setEditTitle(pending.title||""); setAxisX(pending.xLabel||""); setAxisY(pending.yLabel||"");
     setIncZero(false); setGridTicks(5); setValueMode("auto");
     setTheme("dark"); setPalette("Default"); setSmooth(false); setYMin(""); setYMax("");
+    setMaxSlices(0); setShowLegend(true); setPieLabels("percent");
     setAnimKey(k=>k+1); setStage(STAGE_CHART);
   };
 
   const chartOpts={xLabel:axisX,yLabel:axisY,includeZero:incZero,maxTicks:gridTicks,valueLabels:valueMode,
-    theme,colors:PALETTES[palette]||COLORS,smooth,yMin,yMax};
+    theme,colors:PALETTES[palette]||COLORS,smooth,yMin,yMax,pieLabels};
   const exportFmt=()=>({title:editTitle,xLabel:axisX,yLabel:axisY,includeZero:incZero,maxTicks:gridTicks,
-    valueLabels:valueMode,theme,palette,smooth,yMin,yMax});
+    valueLabels:valueMode,theme,palette,smooth,yMin,yMax,maxSlices,showLegend,pieLabels});
   const fileBase=()=>((editTitle||(chartData&&chartData.title)||"chart").replace(/[^a-z0-9]/gi,"_").toLowerCase());
+
+  const isPieType=chartType==="Pie"||chartType==="Donut";
+  // Data actually drawn: pie/donut get top-N slices (rest → "Other"); others pass through
+  // unchanged so the Bar/Line animation effect keeps a stable array reference.
+  const displayData=useMemo(()=>{
+    const d=chartData?chartData.data:[];
+    return isPieType?limitSlices(d,maxSlices):d;
+  },[chartData,isPieType,maxSlices]);
 
   const handleSaveCSV=()=>{
     if(!pending&&!chartData)return;
@@ -588,8 +622,8 @@ function DataVizStudio11(){
   const renderChart=(data)=>{
     if(!data?.length)return null;
     switch(chartType){
-      case"Pie":   return <AnimatedPieChart data={data} animKey={animKey}/>;
-      case"Donut": return <AnimatedPieChart data={data} donut animKey={animKey}/>;
+      case"Pie":   return <AnimatedPieChart data={data} animKey={animKey} opts={chartOpts}/>;
+      case"Donut": return <AnimatedPieChart data={data} donut animKey={animKey} opts={chartOpts}/>;
       case"Bar":   return <AnimatedBarChart data={data} animKey={animKey} opts={chartOpts}/>;
       case"Line":  return <AnimatedLineChart data={data} animKey={animKey} opts={chartOpts}/>;
       default:     return <AnimatedBarChart data={data} animKey={animKey} opts={chartOpts}/>;
@@ -838,6 +872,25 @@ function DataVizStudio11(){
                   </label>
                 </div>
               )}
+              {(chartType==="Pie"||chartType==="Donut")&&(
+                <div style={{display:"flex",gap:16,flexWrap:"wrap",alignItems:"center",marginTop:10}}>
+                  <label style={{display:"flex",alignItems:"center",gap:6}}>
+                    <span style={{fontSize:8,color:"#555",letterSpacing:1,fontWeight:700}}>MAX&nbsp;SLICES</span>
+                    <select value={maxSlices} onChange={e=>{setMaxSlices(Number(e.target.value));setAnimKey(k=>k+1);}}
+                      style={{background:"#070710",border:"1px solid #2a2a3e",borderRadius:6,color:"#e0e0e0",padding:"5px 7px",fontSize:12,fontFamily:"monospace",outline:"none"}}>
+                      <option value={0}>All</option>
+                      {[4,5,6,8,10,12].map(n=><option key={n} value={n}>{n}</option>)}
+                    </select>
+                  </label>
+                  <label style={{display:"flex",alignItems:"center",gap:6}}>
+                    <span style={{fontSize:8,color:"#555",letterSpacing:1,fontWeight:700}}>LABELS</span>
+                    <select value={pieLabels} onChange={e=>setPieLabels(e.target.value)}
+                      style={{background:"#070710",border:"1px solid #2a2a3e",borderRadius:6,color:"#e0e0e0",padding:"5px 7px",fontSize:12,fontFamily:"monospace",outline:"none"}}>
+                      <option value="percent">%</option><option value="value">Value</option><option value="both">Both</option><option value="none">None</option>
+                    </select>
+                  </label>
+                </div>
+              )}
               <div style={{display:"flex",gap:16,flexWrap:"wrap",alignItems:"center",marginTop:10}}>
                 <label style={{display:"flex",alignItems:"center",gap:6}}>
                   <span style={{fontSize:8,color:"#555",letterSpacing:1,fontWeight:700}}>THEME</span>
@@ -853,6 +906,10 @@ function DataVizStudio11(){
                     {Object.keys(PALETTES).map(p=><option key={p} value={p}>{p}</option>)}
                   </select>
                 </label>
+                {chartType!=="Line"&&<label style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer"}}>
+                  <input type="checkbox" checked={showLegend} onChange={e=>setShowLegend(e.target.checked)} style={{accentColor:"#F7931A"}}/>
+                  <span style={{fontSize:8,color:"#555",letterSpacing:1,fontWeight:700}}>LEGEND</span>
+                </label>}
               </div>
               {(chartType==="Pie"||chartType==="Donut")&&<div style={{fontSize:10,color:"#555",marginTop:8}}>Axis labels and gridlines don't apply to pie / donut charts.</div>}
             </div>
@@ -860,8 +917,8 @@ function DataVizStudio11(){
             <div style={{background:"#0f0f1a",border:"1px solid #1e1e2e",borderRadius:12,padding:"20px 14px",textAlign:"center"}}>
               <div style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:15,color:"#fff",marginBottom:3}}>{editTitle||chartData.title}</div>
               <div style={{fontSize:9,color:"#333",marginBottom:16,letterSpacing:1}}>{chartType.toUpperCase()} · {chartData.data.length} ITEMS</div>
-              <div style={{display:"flex",justifyContent:"center"}}>{renderChart(chartData.data)}</div>
-              {chartType!=="Line"&&chartData.data.length<=10&&<Legend data={chartData.data}/>}
+              <div style={{display:"flex",justifyContent:"center"}}>{renderChart(displayData)}</div>
+              {showLegend&&chartType!=="Line"&&displayData.length<=16&&<Legend data={displayData} colors={PALETTES[palette]||COLORS}/>}
               <div style={{display:"flex",gap:8,justifyContent:"center",marginTop:12,flexWrap:"wrap"}}>
                 <button onClick={()=>setAnimKey(k=>k+1)} style={{padding:"6px 14px",background:"transparent",border:"1px solid #1e1e2e",color:"#555",borderRadius:6,cursor:"pointer",fontSize:10,fontFamily:"monospace"}}>↺ Replay</button>
                 <button onClick={handleSaveCSV} style={{padding:"6px 14px",background:"transparent",border:`1px solid ${savedCSV?"#26A17B":"#2a2a3e"}`,color:savedCSV?"#26A17B":"#666",borderRadius:6,cursor:"pointer",fontSize:10,fontFamily:"monospace"}}>{savedCSV?"✓ CSV Saved":"⬇ Save CSV"}</button>
