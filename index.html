@@ -232,6 +232,34 @@ function drawLine(ctx,W,H,data,pv,bg,opts){
 
 const CHART_DIMS={Pie:{w:320,h:320},Donut:{w:320,h:320},Bar:{w:480,h:280},Line:{w:480,h:280}};
 const CHART_STEP={Pie:0.007,Donut:0.007,Bar:0.01,Line:0.012};
+// Explicit chart-area sizes for export/preview. "Auto" keeps the per-type default;
+// the rest force a fixed aspect ratio (slides, square posts, vertical stories).
+const ASPECTS={Auto:null,"1:1":{w:400,h:400},"4:3":{w:480,h:360},"16:9":{w:512,h:288},"9:16":{w:360,h:600}};
+function chartDims(type,aspect){return (aspect&&ASPECTS[aspect])||CHART_DIMS[type]||CHART_DIMS.Bar;}
+// Build a rounded-rect path on contexts that lack the native roundRect (e.g. the SVG
+// recorder). radii: [topLeft, topRight, bottomRight, bottomLeft].
+function ensureRoundRect(ctx){
+  if(typeof ctx.roundRect==="function") return;
+  ctx.roundRect=function(x,y,w,h,r){
+    let tl,tr,br,bl;
+    if(Array.isArray(r)){tl=r[0]||0;tr=r[1]!=null?r[1]:tl;br=r[2]!=null?r[2]:tl;bl=r[3]!=null?r[3]:tr;}
+    else {tl=tr=br=bl=r||0;}
+    this.moveTo(x+tl,y);this.lineTo(x+w-tr,y);this.quadraticCurveTo(x+w,y,x+w,y+tr);
+    this.lineTo(x+w,y+h-br);this.quadraticCurveTo(x+w,y+h,x+w-br,y+h);
+    this.lineTo(x+bl,y+h);this.quadraticCurveTo(x,y+h,x,y+h-bl);
+    this.lineTo(x,y+tl);this.quadraticCurveTo(x,y,x+tl,y);
+    return this;
+  };
+}
+// Inject a CDN script once; resolves when loaded (used for the on-demand SVG encoder).
+function loadScriptOnce(src){
+  return new Promise((resolve,reject)=>{
+    if([...document.scripts].some(s=>s.src===src)) return resolve();
+    const el=document.createElement("script");el.src=src;
+    el.onload=()=>resolve();el.onerror=()=>reject(new Error("script load failed"));
+    document.head.appendChild(el);
+  });
+}
 function drawChart(type,ctx,W,H,data,pv,bg,opts){
   if(type==="Pie")drawPie(ctx,W,H,data,pv,false,bg,opts);
   else if(type==="Donut")drawPie(ctx,W,H,data,pv,true,bg,opts);
@@ -257,19 +285,19 @@ function useChartAnim(type,data,animKey,opts){
   return ref;
 }
 
-function AnimatedPieChart({data,donut=false,animKey,opts}){
+function AnimatedPieChart({data,donut=false,animKey,opts,w=320,h=320}){
   const ref=useChartAnim(donut?"Donut":"Pie",data,animKey,opts);
-  return <canvas ref={ref} width={320} height={320} style={{width:"100%",maxWidth:320}}/>;
+  return <canvas ref={ref} width={w} height={h} style={{width:"100%",maxWidth:w}}/>;
 }
 
-function AnimatedBarChart({data,animKey,opts}){
+function AnimatedBarChart({data,animKey,opts,w=480,h=280}){
   const ref=useChartAnim("Bar",data,animKey,opts);
-  return <canvas ref={ref} width={480} height={280} style={{width:"100%",maxWidth:480}}/>;
+  return <canvas ref={ref} width={w} height={h} style={{width:"100%",maxWidth:w}}/>;
 }
 
-function AnimatedLineChart({data,animKey,opts}){
+function AnimatedLineChart({data,animKey,opts,w=480,h=280}){
   const ref=useChartAnim("Line",data,animKey,opts);
-  return <canvas ref={ref} width={480} height={280} style={{width:"100%",maxWidth:480}}/>;
+  return <canvas ref={ref} width={w} height={h} style={{width:"100%",maxWidth:w}}/>;
 }
 
 // ── Export composition (shared by GIF + PNG) ────────────────────────────────────
@@ -282,7 +310,7 @@ function chartLayout(chartData,chartType,fmt){
   const plotData=isPie?limitSlices(chartData.data,fmt.maxSlices):chartData.data;
   const axisOpts={xLabel:fmt.xLabel,yLabel:fmt.yLabel,includeZero:fmt.includeZero,maxTicks:fmt.maxTicks,
     valueLabels:fmt.valueLabels,smooth:fmt.smooth,yMin:fmt.yMin,yMax:fmt.yMax,theme:fmt.theme,colors,pieLabels:fmt.pieLabels};
-  const cd=CHART_DIMS[chartType]||CHART_DIMS.Bar, titleH=46;
+  const cd=chartDims(chartType,fmt.aspect), titleH=46;
   const legend=(isPie&&fmt.showLegend!==false&&plotData.length<=16)?plotData:null;
   const legendH=legend?Math.ceil(legend.length/3)*20+12:0;
   const srcText=chartData.source&&chartData.source.name?("Source: "+chartData.source.name):null;
@@ -308,8 +336,8 @@ function composeChart(ctx,L,chartData,chartType,pv){
 }
 
 // Animated GIF — encodes the build-up via gif.js.
-async function exportChartGif(chartData,chartType,onProgress,fmt){
-  const L=chartLayout(chartData,chartType,fmt), S=2;
+async function exportChartGif(chartData,chartType,onProgress,fmt,scale){
+  const L=chartLayout(chartData,chartType,fmt), S=Math.min(scale||2,2);   // cap GIF scale to keep file size sane
   const canvas=document.createElement("canvas");canvas.width=L.W*S;canvas.height=L.H*S;
   const ctx=canvas.getContext("2d");ctx.scale(S,S);
   // Web Workers can't load cross-origin scripts directly, so fetch the worker and
@@ -330,13 +358,36 @@ async function exportChartGif(chartData,chartType,onProgress,fmt){
   });
 }
 
-// Static high-res PNG of the finished chart.
-async function exportChartPng(chartData,chartType,fmt){
-  const L=chartLayout(chartData,chartType,fmt), S=3;          // 3× for crisp slides
+// Static high-res PNG of the finished chart. scale = pixel multiplier (default 3×).
+async function exportChartPng(chartData,chartType,fmt,scale){
+  const L=chartLayout(chartData,chartType,fmt), S=scale||3;
   const canvas=document.createElement("canvas");canvas.width=L.W*S;canvas.height=L.H*S;
   const ctx=canvas.getContext("2d");ctx.scale(S,S);
   composeChart(ctx,L,chartData,chartType,1);
   return await new Promise((resolve,reject)=>{canvas.toBlob(b=>b?resolve(b):reject(new Error("PNG export failed.")),"image/png");});
+}
+
+// Vector SVG of the finished chart. Reuses the canvas drawing via canvas2svg, which
+// records the same 2D-context calls into an SVG document (lazy-loaded on first use).
+async function exportChartSvg(chartData,chartType,fmt){
+  if(!window.C2S){
+    try{ await loadScriptOnce("https://unpkg.com/canvas2svg@1.0.19/canvas2svg.js"); }catch(e){}
+  }
+  if(!window.C2S) throw new Error("Couldn't load the SVG exporter — needs internet the first time.");
+  const L=chartLayout(chartData,chartType,fmt);
+  const ctx=new window.C2S(L.W,L.H);
+  ensureRoundRect(ctx);
+  composeChart(ctx,L,chartData,chartType,1);
+  const svg=ctx.getSerializedSvg(true);
+  return new Blob([svg],{type:"image/svg+xml"});
+}
+
+// Copy the finished chart to the clipboard as a PNG image. The ClipboardItem is fed a
+// Promise<Blob> so Safari accepts it from within the click gesture.
+async function copyChartToClipboard(chartData,chartType,fmt,scale){
+  if(!navigator.clipboard||!window.ClipboardItem) throw new Error("Clipboard image copy isn't supported in this browser.");
+  const item=new window.ClipboardItem({"image/png":exportChartPng(chartData,chartType,fmt,scale)});
+  await navigator.clipboard.write([item]);
 }
 
 function Legend({data,colors}){
@@ -497,7 +548,11 @@ function DataVizStudio11(){
   const [maxSlices,setMaxSlices]=useState(0);          // 0 = show all slices (pie/donut)
   const [showLegend,setShowLegend]=useState(true);
   const [pieLabels,setPieLabels]=useState("percent");  // percent | value | both | none
+  const [aspect,setAspect]=useState("Auto");           // Auto | 1:1 | 4:3 | 16:9 | 9:16
+  const [scale,setScale]=useState(3);                  // PNG/clipboard pixel multiplier
   const [pngBusy,setPngBusy]=useState(false);
+  const [svgBusy,setSvgBusy]=useState(false);
+  const [copyState,setCopyState]=useState("");         // "" | done | error
   const [gifBusy,setGifBusy]=useState(false);
   const [gifPct,setGifPct]=useState(0);
   const [apiKey,setApiKey]=useState("");
@@ -567,13 +622,14 @@ function DataVizStudio11(){
     setIncZero(false); setGridTicks(5); setValueMode("auto");
     setTheme("dark"); setPalette("Default"); setSmooth(false); setYMin(""); setYMax("");
     setMaxSlices(0); setShowLegend(true); setPieLabels("percent");
+    setAspect("Auto"); setScale(3); setCopyState("");
     setAnimKey(k=>k+1); setStage(STAGE_CHART);
   };
 
   const chartOpts={xLabel:axisX,yLabel:axisY,includeZero:incZero,maxTicks:gridTicks,valueLabels:valueMode,
     theme,colors:PALETTES[palette]||COLORS,smooth,yMin,yMax,pieLabels};
   const exportFmt=()=>({title:editTitle,xLabel:axisX,yLabel:axisY,includeZero:incZero,maxTicks:gridTicks,
-    valueLabels:valueMode,theme,palette,smooth,yMin,yMax,maxSlices,showLegend,pieLabels});
+    valueLabels:valueMode,theme,palette,smooth,yMin,yMax,maxSlices,showLegend,pieLabels,aspect});
   const fileBase=()=>((editTitle||(chartData&&chartData.title)||"chart").replace(/[^a-z0-9]/gi,"_").toLowerCase());
 
   const isPieType=chartType==="Pie"||chartType==="Donut";
@@ -583,6 +639,8 @@ function DataVizStudio11(){
     const d=chartData?chartData.data:[];
     return isPieType?limitSlices(d,maxSlices):d;
   },[chartData,isPieType,maxSlices]);
+  const dims=chartDims(chartType,aspect);   // live-preview canvas size (matches export)
+  const exportLayout=chartData?chartLayout(chartData,chartType,exportFmt()):null;   // for the export-size hint
 
   const handleSaveCSV=()=>{
     if(!pending&&!chartData)return;
@@ -604,7 +662,7 @@ function DataVizStudio11(){
     if(gifBusy||!chartData)return;
     if(!window.GIF){alert("GIF encoder didn't load (needs internet). Try a hard-reload.");return;}
     setGifBusy(true);setGifPct(0);
-    try{ downloadBlob(await exportChartGif(chartData,chartType,setGifPct,exportFmt()),"gif"); }
+    try{ downloadBlob(await exportChartGif(chartData,chartType,setGifPct,exportFmt(),scale),"gif"); }
     catch(e){alert(e.message||"GIF export failed.");}
     finally{setGifBusy(false);}
   };
@@ -612,9 +670,24 @@ function DataVizStudio11(){
   const savePng=async()=>{
     if(pngBusy||!chartData)return;
     setPngBusy(true);
-    try{ downloadBlob(await exportChartPng(chartData,chartType,exportFmt()),"png"); }
+    try{ downloadBlob(await exportChartPng(chartData,chartType,exportFmt(),scale),"png"); }
     catch(e){alert(e.message||"PNG export failed.");}
     finally{setPngBusy(false);}
+  };
+
+  const saveSvg=async()=>{
+    if(svgBusy||!chartData)return;
+    setSvgBusy(true);
+    try{ downloadBlob(await exportChartSvg(chartData,chartType,exportFmt()),"svg"); }
+    catch(e){alert(e.message||"SVG export failed.");}
+    finally{setSvgBusy(false);}
+  };
+
+  const copyChart=async()=>{
+    if(!chartData)return;
+    try{ await copyChartToClipboard(chartData,chartType,exportFmt(),scale); setCopyState("done"); }
+    catch(e){ setCopyState("error"); }
+    setTimeout(()=>setCopyState(""),2500);
   };
 
   const reset=()=>{setStage(STAGE_COLLECT);setPending(null);setSavedCSV(false);setCsvError("");setValidationIssues([]);};
@@ -622,11 +695,11 @@ function DataVizStudio11(){
   const renderChart=(data)=>{
     if(!data?.length)return null;
     switch(chartType){
-      case"Pie":   return <AnimatedPieChart data={data} animKey={animKey} opts={chartOpts}/>;
-      case"Donut": return <AnimatedPieChart data={data} donut animKey={animKey} opts={chartOpts}/>;
-      case"Bar":   return <AnimatedBarChart data={data} animKey={animKey} opts={chartOpts}/>;
-      case"Line":  return <AnimatedLineChart data={data} animKey={animKey} opts={chartOpts}/>;
-      default:     return <AnimatedBarChart data={data} animKey={animKey} opts={chartOpts}/>;
+      case"Pie":   return <AnimatedPieChart data={data} animKey={animKey} opts={chartOpts} w={dims.w} h={dims.h}/>;
+      case"Donut": return <AnimatedPieChart data={data} donut animKey={animKey} opts={chartOpts} w={dims.w} h={dims.h}/>;
+      case"Bar":   return <AnimatedBarChart data={data} animKey={animKey} opts={chartOpts} w={dims.w} h={dims.h}/>;
+      case"Line":  return <AnimatedLineChart data={data} animKey={animKey} opts={chartOpts} w={dims.w} h={dims.h}/>;
+      default:     return <AnimatedBarChart data={data} animKey={animKey} opts={chartOpts} w={dims.w} h={dims.h}/>;
     }
   };
 
@@ -911,6 +984,23 @@ function DataVizStudio11(){
                   <span style={{fontSize:8,color:"#555",letterSpacing:1,fontWeight:700}}>LEGEND</span>
                 </label>}
               </div>
+              <div style={{display:"flex",gap:16,flexWrap:"wrap",alignItems:"center",marginTop:10}}>
+                <label style={{display:"flex",alignItems:"center",gap:6}}>
+                  <span style={{fontSize:8,color:"#555",letterSpacing:1,fontWeight:700}}>ASPECT</span>
+                  <select value={aspect} onChange={e=>{setAspect(e.target.value);setAnimKey(k=>k+1);}}
+                    style={{background:"#070710",border:"1px solid #2a2a3e",borderRadius:6,color:"#e0e0e0",padding:"5px 7px",fontSize:12,fontFamily:"monospace",outline:"none"}}>
+                    {Object.keys(ASPECTS).map(a=><option key={a} value={a}>{a}</option>)}
+                  </select>
+                </label>
+                <label style={{display:"flex",alignItems:"center",gap:6}}>
+                  <span style={{fontSize:8,color:"#555",letterSpacing:1,fontWeight:700}}>SIZE</span>
+                  <select value={scale} onChange={e=>setScale(Number(e.target.value))}
+                    style={{background:"#070710",border:"1px solid #2a2a3e",borderRadius:6,color:"#e0e0e0",padding:"5px 7px",fontSize:12,fontFamily:"monospace",outline:"none"}}>
+                    {[1,2,3,4].map(n=><option key={n} value={n}>{n}×</option>)}
+                  </select>
+                </label>
+                {exportLayout&&<span style={{fontSize:9,color:"#444"}}>PNG/copy ≈ {exportLayout.W*scale}×{exportLayout.H*scale}px · GIF capped at 2×</span>}
+              </div>
               {(chartType==="Pie"||chartType==="Donut")&&<div style={{fontSize:10,color:"#555",marginTop:8}}>Axis labels and gridlines don't apply to pie / donut charts.</div>}
             </div>
 
@@ -922,7 +1012,9 @@ function DataVizStudio11(){
               <div style={{display:"flex",gap:8,justifyContent:"center",marginTop:12,flexWrap:"wrap"}}>
                 <button onClick={()=>setAnimKey(k=>k+1)} style={{padding:"6px 14px",background:"transparent",border:"1px solid #1e1e2e",color:"#555",borderRadius:6,cursor:"pointer",fontSize:10,fontFamily:"monospace"}}>↺ Replay</button>
                 <button onClick={handleSaveCSV} style={{padding:"6px 14px",background:"transparent",border:`1px solid ${savedCSV?"#26A17B":"#2a2a3e"}`,color:savedCSV?"#26A17B":"#666",borderRadius:6,cursor:"pointer",fontSize:10,fontFamily:"monospace"}}>{savedCSV?"✓ CSV Saved":"⬇ Save CSV"}</button>
+                <button onClick={copyChart} style={{padding:"6px 14px",background:"transparent",border:`1px solid ${copyState==="done"?"#26A17B":copyState==="error"?"#E84142":"#9B59B6"}`,color:copyState==="done"?"#26A17B":copyState==="error"?"#E84142":"#9B59B6",borderRadius:6,cursor:"pointer",fontSize:10,fontFamily:"monospace",fontWeight:700}}>{copyState==="done"?"✓ Copied":copyState==="error"?"✕ Not supported":"📋 Copy"}</button>
                 <button onClick={savePng} disabled={pngBusy} style={{padding:"6px 14px",background:"transparent",border:"1px solid #627EEA",color:"#627EEA",borderRadius:6,cursor:pngBusy?"default":"pointer",fontSize:10,fontFamily:"monospace",fontWeight:700,opacity:pngBusy?0.6:1}}>{pngBusy?"⏳ …":"🖼 Save PNG"}</button>
+                <button onClick={saveSvg} disabled={svgBusy} style={{padding:"6px 14px",background:"transparent",border:"1px solid #26A17B",color:"#26A17B",borderRadius:6,cursor:svgBusy?"default":"pointer",fontSize:10,fontFamily:"monospace",fontWeight:700,opacity:svgBusy?0.6:1}}>{svgBusy?"⏳ …":"◇ Save SVG"}</button>
                 <button onClick={saveGif} disabled={gifBusy} style={{padding:"6px 14px",background:gifBusy?"#1a1000":"linear-gradient(135deg,#F7931A,#E84142)",border:"none",color:"#fff",borderRadius:6,cursor:gifBusy?"default":"pointer",fontSize:10,fontFamily:"monospace",fontWeight:700,opacity:gifBusy?0.8:1}}>{gifBusy?`⏳ Encoding ${gifPct}%`:"🎞 Save GIF (animated)"}</button>
                 <button onClick={reset} style={{padding:"6px 14px",background:"transparent",border:"1px solid #2a2a3e",color:"#555",borderRadius:6,cursor:"pointer",fontSize:10,fontFamily:"monospace"}}>＋ New Chart</button>
               </div>
