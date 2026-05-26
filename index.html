@@ -3,10 +3,10 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-  <meta name="theme-color" content="#0a0a0f" />
+  <meta name="theme-color" content="#171c28" />
   <title>Graphics Hot AF</title>
   <style>
-    html, body, #root { margin: 0; padding: 0; background: #0a0a0f; }
+    html, body, #root { margin: 0; padding: 0; background: #171c28; }
     * { -webkit-tap-highlight-color: transparent; }
   </style>
 
@@ -94,7 +94,7 @@ const PALETTES={
   Forest:["#22C55E","#84CC16","#10B981","#4D7C0F","#16A34A","#65A30D","#0D9488","#15803D","#A3E635","#34D399"],
   Mono:["#94A3B8","#64748B","#475569","#334155","#CBD5E1","#1E293B","#A8A29E","#78716C","#D6D3D1","#57534E"],
 };
-const THEME_DARK ={bg:"#0f0f1a",grid:"#1e1e2e",tick:"#666",axisLabel:"#888",axisTitle:"#aaa",title:"#fff",value:"#fff",pct:"#fff",legend:"#bbb",source:"#666"};
+const THEME_DARK ={bg:"#212838",grid:"#2c3446",tick:"#666",axisLabel:"#888",axisTitle:"#aaa",title:"#fff",value:"#fff",pct:"#fff",legend:"#bbb",source:"#666"};
 const THEME_LIGHT={bg:"#ffffff",grid:"#e5e5ea",tick:"#888",axisLabel:"#555",axisTitle:"#444",title:"#111",value:"#222",pct:"#fff",legend:"#333",source:"#888"};
 function themeOf(opts){return opts&&opts.theme==="light"?THEME_LIGHT:THEME_DARK;}
 function paletteOf(opts){return (opts&&opts.colors)||COLORS;}
@@ -217,6 +217,9 @@ function drawLine(ctx,W,H,data,pv,bg,opts){
   if(bg){ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);}else ctx.clearRect(0,0,W,H);
   ctx.textBaseline="middle";
   ticks.forEach(v=>{const y=padT+(1-(v-niceMin)/denom)*plotH;ctx.strokeStyle=th.grid;ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(padL,y);ctx.lineTo(W-padR,y);ctx.stroke();ctx.font="8px monospace";ctx.fillStyle=th.tick;ctx.textAlign="right";ctx.fillText(axisTickLabel(v,step),padL-5,y);});
+  // Optional vertical gridlines, aligned with the (thinned) x-axis labels.
+  if(opts.vGrid){const vstep=labelStep(data.length,10);ctx.strokeStyle=th.grid;ctx.lineWidth=1;
+    pts.forEach((q,i)=>{if(i%vstep===0||i===pts.length-1){ctx.beginPath();ctx.moveTo(q.x,padT);ctx.lineTo(q.x,baseY);ctx.stroke();}});}
   ctx.textBaseline="alphabetic";
   if(vpts.length>=2){
     const g=ctx.createLinearGradient(0,padT,0,baseY);g.addColorStop(0,lc+"44");g.addColorStop(1,lc+"00");
@@ -325,7 +328,7 @@ function chartLayout(chartData,chartType,fmt){
   const isPie=chartType==="Pie"||chartType==="Donut";
   const plotData=isPie?limitSlices(chartData.data,fmt.maxSlices):chartData.data;
   const axisOpts={xLabel:fmt.xLabel,yLabel:fmt.yLabel,includeZero:fmt.includeZero,maxTicks:fmt.maxTicks,
-    valueLabels:fmt.valueLabels,smooth:fmt.smooth,yMin:fmt.yMin,yMax:fmt.yMax,theme:fmt.theme,colors,pieLabels:fmt.pieLabels,pieName:fmt.pieName};
+    valueLabels:fmt.valueLabels,smooth:fmt.smooth,vGrid:fmt.vGrid,yMin:fmt.yMin,yMax:fmt.yMax,theme:fmt.theme,colors,pieLabels:fmt.pieLabels,pieName:fmt.pieName};
   const cd=chartDims(chartType,fmt.aspect), titleH=46;
   const legend=(isPie&&plotData.length<=40)?plotData:null;   // pie/donut: legend of names always shown
   const legendH=legend?Math.ceil(legend.length/3)*20+12:0;
@@ -457,11 +460,11 @@ function EditableDataTable({rows,onChange}){
   const move=(i,d)=>{const j=i+d;if(j<0||j>=rows.length)return;const n=rows.slice();[n[i],n[j]]=[n[j],n[i]];onChange(n);};
   const add=()=>onChange([...rows,{label:"",value:""}]);
   const cell={padding:"3px 6px",fontFamily:"monospace",verticalAlign:"middle"};
-  const inp={width:"100%",background:"#070710",border:"1px solid #1e1e2e",borderRadius:5,color:"#e0e0e0",padding:"6px 7px",fontSize:13,fontFamily:"monospace",outline:"none",boxSizing:"border-box"};
+  const inp={width:"100%",background:"#070710",border:"1px solid #2c3446",borderRadius:5,color:"#e0e0e0",padding:"6px 7px",fontSize:13,fontFamily:"monospace",outline:"none",boxSizing:"border-box"};
   const icon=extra=>({background:"transparent",border:"1px solid #2a2a3e",borderRadius:5,color:"#888",cursor:"pointer",fontSize:11,fontFamily:"monospace",padding:"4px 7px",...extra});
   return <div style={{overflowX:"auto",marginTop:4}}>
     <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
-      <thead><tr style={{borderBottom:"1px solid #1e1e2e"}}>
+      <thead><tr style={{borderBottom:"1px solid #2c3446"}}>
         {["#","LABEL","VALUE",""].map((h,k)=><th key={k} style={{padding:"5px 6px",textAlign:h==="VALUE"?"right":"left",color:"#555",fontWeight:700,fontFamily:"monospace"}}>{h}</th>)}
       </tr></thead>
       <tbody>{rows.map((d,i)=><tr key={i} style={{borderBottom:"1px solid #111"}}>
@@ -601,6 +604,7 @@ function DataVizStudio11(){
   const [theme,setTheme]=useState("dark");           // dark | light
   const [palette,setPalette]=useState("Default");
   const [smooth,setSmooth]=useState(false);
+  const [vGrid,setVGrid]=useState(false);              // vertical gridlines (line chart)
   const [yMin,setYMin]=useState("");
   const [yMax,setYMax]=useState("");
   const [maxSlices,setMaxSlices]=useState(0);          // 0 = show all slices (pie/donut)
@@ -698,7 +702,7 @@ function DataVizStudio11(){
     setChartData(approved); setChartType(approved.chartType);
     setEditTitle(approved.title||""); setAxisX(approved.xLabel||""); setAxisY(approved.yLabel||"");
     setIncZero(false); setGridTicks(5); setValueMode("auto");
-    setTheme("dark"); setPalette("Default"); setSmooth(false); setYMin(""); setYMax("");
+    setTheme("dark"); setPalette("Default"); setSmooth(false); setVGrid(false); setYMin(""); setYMax("");
     setMaxSlices(0); setShowLegend(true); setPieLabels("percent"); setPieName(false);
     setAspect("Auto"); setScale(3); setCopyState("");
     setSpeed(1); setEasing("Ease out"); setGifLoop(true); setGifHold(2000);
@@ -706,9 +710,9 @@ function DataVizStudio11(){
   };
 
   const chartOpts={xLabel:axisX,yLabel:axisY,includeZero:incZero,maxTicks:gridTicks,valueLabels:valueMode,
-    theme,colors:PALETTES[palette]||COLORS,smooth,yMin,yMax,pieLabels,pieName,speed,easing};
+    theme,colors:PALETTES[palette]||COLORS,smooth,vGrid,yMin,yMax,pieLabels,pieName,speed,easing};
   const exportFmt=()=>({title:editTitle,xLabel:axisX,yLabel:axisY,includeZero:incZero,maxTicks:gridTicks,
-    valueLabels:valueMode,theme,palette,smooth,yMin,yMax,maxSlices,showLegend,pieLabels,pieName,aspect,
+    valueLabels:valueMode,theme,palette,smooth,vGrid,yMin,yMax,maxSlices,showLegend,pieLabels,pieName,aspect,
     speed,easing,loop:gifLoop,hold:gifHold});
   const fileBase=()=>((editTitle||(chartData&&chartData.title)||"chart").replace(/[^a-z0-9]/gi,"_").toLowerCase());
 
@@ -789,7 +793,7 @@ function DataVizStudio11(){
   });
   const chartBtn=(t)=>({
     padding:"6px 13px",borderRadius:6,border:"1px solid",cursor:"pointer",fontSize:11,fontFamily:"monospace",
-    borderColor:chartType===t?"#627EEA":"#1e1e2e",background:chartType===t?"#627EEA18":"transparent",color:chartType===t?"#627EEA":"#555",
+    borderColor:chartType===t?"#627EEA":"#2c3446",background:chartType===t?"#627EEA18":"transparent",color:chartType===t?"#627EEA":"#555",
   });
 
   const Footnote=({source})=>source?(
@@ -799,11 +803,11 @@ function DataVizStudio11(){
   ):null;
 
   return(
-    <div style={{minHeight:"100vh",background:"#0a0a0f",color:"#e0e0e0",fontFamily:"monospace",paddingBottom:40}}>
+    <div style={{minHeight:"100vh",background:"#171c28",color:"#e0e0e0",fontFamily:"monospace",paddingBottom:40}}>
       <link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=Dancing+Script:wght@700&display=swap" rel="stylesheet"/>
 
       {/* Header */}
-      <div style={{borderBottom:"1px solid #1e1e2e",padding:"13px 18px",display:"flex",alignItems:"center",gap:12,rowGap:8,flexWrap:"wrap",background:"#0d0d18"}}>
+      <div style={{borderBottom:"1px solid #2c3446",padding:"13px 18px",display:"flex",alignItems:"center",gap:12,rowGap:8,flexWrap:"wrap",background:"#1c2230"}}>
         <div style={{width:28,height:28,background:"linear-gradient(135deg,#F7931A,#E84142)",borderRadius:7,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13}}>📊</div>
         <div style={{flex:1}}>
           <div style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:15,color:"#fff"}}>Graphics Hot AF</div>
@@ -814,7 +818,7 @@ function DataVizStudio11(){
           {[[STAGE_COLLECT,"1 Collect"],[STAGE_REVIEW,"2 Review"],[STAGE_CHART,"3 Chart"]].map(([s,label])=>(
             <div key={s} style={{padding:"3px 9px",borderRadius:20,fontSize:9,fontWeight:700,
               background:stage===s?"#F7931A22":stage===STAGE_CHART&&s===STAGE_REVIEW?"#26A17B22":"transparent",
-              border:`1px solid ${stage===s?"#F7931A":stage===STAGE_CHART&&s!==STAGE_COLLECT?"#26A17B44":"#1e1e2e"}`,
+              border:`1px solid ${stage===s?"#F7931A":stage===STAGE_CHART&&s!==STAGE_COLLECT?"#26A17B44":"#2c3446"}`,
               color:stage===s?"#F7931A":stage===STAGE_CHART&&s!==STAGE_COLLECT?"#26A17B":"#333"}}>{label}
             </div>
           ))}
@@ -830,7 +834,7 @@ function DataVizStudio11(){
 
         {/* ── STAGE 1 ── */}
         {stage===STAGE_COLLECT&&(
-          <div style={{background:"#0f0f1a",border:"1px solid #1e1e2e",borderRadius:10,padding:16}}>
+          <div style={{background:"#212838",border:"1px solid #2c3446",borderRadius:10,padding:16}}>
             <div style={{fontSize:9,color:"#444",letterSpacing:1,marginBottom:10}}>DATA SOURCE</div>
             <div style={{display:"flex",gap:6,marginBottom:16,flexWrap:"wrap"}}>
               <button style={tabBtn("quick","⚡ Examples")} onClick={()=>setTab("quick")}>⚡ Examples</button>
@@ -854,7 +858,7 @@ function DataVizStudio11(){
                 <div style={{fontSize:9,color:"#444",letterSpacing:1,marginBottom:7}}>PASTE CSV <span style={{color:"#2a2a3e"}}>(first row: Label,Value)</span></div>
                 <textarea value={csvText} onChange={e=>setCsvText(e.target.value)}
                   placeholder={"Label,Value\nApple,45\nGoogle,30\nMeta,25"}
-                  style={{width:"100%",minHeight:130,background:"#070710",border:"1px solid #1e1e2e",borderRadius:6,color:"#e0e0e0",padding:"9px 11px",fontSize:16,fontFamily:"monospace",resize:"none",boxSizing:"border-box",outline:"none",WebkitUserSelect:"text",userSelect:"text",touchAction:"manipulation",position:"relative",zIndex:10}}/>
+                  style={{width:"100%",minHeight:130,background:"#070710",border:"1px solid #2c3446",borderRadius:6,color:"#e0e0e0",padding:"9px 11px",fontSize:16,fontFamily:"monospace",resize:"none",boxSizing:"border-box",outline:"none",WebkitUserSelect:"text",userSelect:"text",touchAction:"manipulation",position:"relative",zIndex:10}}/>
                 <div style={{display:"flex",gap:8,marginTop:10,alignItems:"center",flexWrap:"wrap"}}>
                   <button onClick={handleCSV} style={{padding:"9px 20px",borderRadius:6,background:"linear-gradient(135deg,#627EEA,#26A17B)",color:"#fff",border:"none",cursor:"pointer",fontSize:12,fontFamily:"monospace",fontWeight:700}}>→ Review Data</button>
                   <button onClick={()=>{setCsvText("");setCsvError("");}} style={{padding:"9px 12px",borderRadius:6,background:"transparent",border:"1px solid #2a2a3e",color:"#555",cursor:"pointer",fontSize:11,fontFamily:"monospace"}}>✕ Clear</button>
@@ -871,7 +875,7 @@ function DataVizStudio11(){
                   <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
                     <input type="password" value={apiKey} onChange={e=>{setApiKey(e.target.value);setKeySaved(false);}} placeholder="sk-ant-..."
                       style={{flex:1,minWidth:170,background:"#070710",border:"1px solid #2a2a3e",borderRadius:6,color:"#e0e0e0",padding:"9px 11px",fontSize:14,fontFamily:"monospace",outline:"none",boxSizing:"border-box"}}/>
-                    <button onClick={saveKey} style={{padding:"9px 16px",borderRadius:6,background:keySaved?"#0d1a12":"#1e1e2e",border:`1px solid ${keySaved?"#26A17B":"#2a2a3e"}`,color:keySaved?"#26A17B":"#ccc",cursor:"pointer",fontSize:12,fontFamily:"monospace",fontWeight:700}}>{keySaved?"✓ Saved":"Save"}</button>
+                    <button onClick={saveKey} style={{padding:"9px 16px",borderRadius:6,background:keySaved?"#0d1a12":"#2c3446",border:`1px solid ${keySaved?"#26A17B":"#2a2a3e"}`,color:keySaved?"#26A17B":"#ccc",cursor:"pointer",fontSize:12,fontFamily:"monospace",fontWeight:700}}>{keySaved?"✓ Saved":"Save"}</button>
                     {(apiKey||keySaved)&&<button onClick={clearKey} style={{padding:"9px 12px",borderRadius:6,background:"transparent",border:"1px solid #2a2a3e",color:"#555",cursor:"pointer",fontSize:11,fontFamily:"monospace"}}>Clear</button>}
                   </div>
                   <div style={{fontSize:10,color:"#555",marginTop:8,lineHeight:1.5}}>Stored only in this browser, sent directly to Anthropic. Pay-per-use (not your Claude.ai subscription). Get a key at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer" style={{color:"#627EEA"}}>console.anthropic.com</a>.</div>
@@ -910,9 +914,9 @@ function DataVizStudio11(){
 
                 {/* Divider */}
                 <div style={{display:"flex",alignItems:"center",gap:8,margin:"10px 0"}}>
-                  <div style={{flex:1,height:1,background:"#1e1e2e"}}/>
+                  <div style={{flex:1,height:1,background:"#2c3446"}}/>
                   <div style={{fontSize:10,color:"#444"}}>manual fallback — paste a CSV reply below</div>
-                  <div style={{flex:1,height:1,background:"#1e1e2e"}}/>
+                  <div style={{flex:1,height:1,background:"#2c3446"}}/>
                 </div>
 
                 {/* Step 2 */}
@@ -941,7 +945,7 @@ function DataVizStudio11(){
 
         {/* ── STAGE 2 ── */}
         {stage===STAGE_REVIEW&&pending&&(
-          <div style={{background:"#0f0f1a",border:"1px solid #1e1e2e",borderRadius:10,padding:16}}>
+          <div style={{background:"#212838",border:"1px solid #2c3446",borderRadius:10,padding:16}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
               <div>
                 <div style={{fontSize:9,color:"#444",letterSpacing:1,marginBottom:4}}>REVIEW DATA BEFORE GRAPHING</div>
@@ -990,7 +994,7 @@ function DataVizStudio11(){
             </div>
 
             {/* Edit & format — applies to live chart + GIF export */}
-            <div style={{background:"#0f0f1a",border:"1px solid #1e1e2e",borderRadius:10,padding:12}}>
+            <div style={{background:"#212838",border:"1px solid #2c3446",borderRadius:10,padding:12}}>
               <SectionLabel first>TITLE &amp; AXES</SectionLabel>
               <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:6}}>
                 <label style={{display:"flex",flexDirection:"column",gap:3,flex:2,minWidth:160}}>
@@ -1035,6 +1039,10 @@ function DataVizStudio11(){
                   {chartType==="Line"&&<label style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer"}}>
                     <input type="checkbox" checked={smooth} onChange={e=>setSmooth(e.target.checked)} style={{accentColor:"#F7931A"}}/>
                     <span style={{fontSize:8,color:"#555",letterSpacing:1,fontWeight:700}}>SMOOTH</span>
+                  </label>}
+                  {chartType==="Line"&&<label style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer"}}>
+                    <input type="checkbox" checked={vGrid} onChange={e=>setVGrid(e.target.checked)} style={{accentColor:"#F7931A"}}/>
+                    <span style={{fontSize:8,color:"#555",letterSpacing:1,fontWeight:700}}>V-GRID</span>
                   </label>}
                   <label style={{display:"flex",alignItems:"center",gap:5}}>
                     <span style={{fontSize:8,color:"#555",letterSpacing:1,fontWeight:700}}>Y&nbsp;MIN</span>
@@ -1143,13 +1151,13 @@ function DataVizStudio11(){
               {(chartType==="Pie"||chartType==="Donut")&&<div style={{fontSize:10,color:"#555",marginTop:8}}>The legend of category names is always shown below. "On slice" adds numbers/% on the chart; tick "Name on slice" to label slices directly. Axis labels and gridlines don't apply to pie / donut.</div>}
             </div>
 
-            <div style={{background:"#0f0f1a",border:"1px solid #1e1e2e",borderRadius:12,padding:"20px 14px",textAlign:"center"}}>
+            <div style={{background:"#212838",border:"1px solid #2c3446",borderRadius:12,padding:"20px 14px",textAlign:"center"}}>
               <div style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:15,color:"#fff",marginBottom:3}}>{editTitle||chartData.title}</div>
               <div style={{fontSize:9,color:"#333",marginBottom:16,letterSpacing:1}}>{chartType.toUpperCase()} · {chartData.data.length} ITEMS</div>
               <div style={{display:"flex",justifyContent:"center"}}>{renderChart(displayData)}</div>
               {(isPieType||(chartType==="Bar"&&showLegend))&&displayData.length<=40&&<Legend data={displayData} colors={PALETTES[palette]||COLORS}/>}
               <div style={{display:"flex",gap:8,justifyContent:"center",marginTop:12,flexWrap:"wrap"}}>
-                <button onClick={()=>setAnimKey(k=>k+1)} style={{padding:"6px 14px",background:"transparent",border:"1px solid #1e1e2e",color:"#555",borderRadius:6,cursor:"pointer",fontSize:10,fontFamily:"monospace"}}>↺ Replay</button>
+                <button onClick={()=>setAnimKey(k=>k+1)} style={{padding:"6px 14px",background:"transparent",border:"1px solid #2c3446",color:"#555",borderRadius:6,cursor:"pointer",fontSize:10,fontFamily:"monospace"}}>↺ Replay</button>
                 <button onClick={handleSaveCSV} style={{padding:"6px 14px",background:"transparent",border:`1px solid ${savedCSV?"#26A17B":"#2a2a3e"}`,color:savedCSV?"#26A17B":"#666",borderRadius:6,cursor:"pointer",fontSize:10,fontFamily:"monospace"}}>{savedCSV?"✓ CSV Saved":"⬇ Save CSV"}</button>
                 <button onClick={copyChart} style={{padding:"6px 14px",background:"transparent",border:`1px solid ${copyState==="done"?"#26A17B":copyState==="error"?"#E84142":"#9B59B6"}`,color:copyState==="done"?"#26A17B":copyState==="error"?"#E84142":"#9B59B6",borderRadius:6,cursor:"pointer",fontSize:10,fontFamily:"monospace",fontWeight:700}}>{copyState==="done"?"✓ Copied":copyState==="error"?"✕ Not supported":"📋 Copy"}</button>
                 <button onClick={savePng} disabled={pngBusy} style={{padding:"6px 14px",background:"transparent",border:"1px solid #627EEA",color:"#627EEA",borderRadius:6,cursor:pngBusy?"default":"pointer",fontSize:10,fontFamily:"monospace",fontWeight:700,opacity:pngBusy?0.6:1}}>{pngBusy?"⏳ …":"🖼 Save PNG"}</button>
