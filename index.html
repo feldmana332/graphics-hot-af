@@ -23,6 +23,9 @@
   <script type="text/babel" data-presets="react">
 const { useState, useRef, useEffect, useCallback, useMemo } = React;
 
+// Last-modified stamp shown in the header. Update this when publishing a new version.
+const BUILD_STAMP = "2026-05-26 10:22 UTC";
+
 const CHART_TYPES = ["Pie","Donut","Bar","Line"];
 const COLORS = ["#F7931A","#627EEA","#26A17B","#E84142","#9B59B6","#3498DB","#E67E22","#2ECC71","#E91E63","#00BCD4","#FF5722","#8BC34A","#FFC107","#795548","#607D8B"];
 
@@ -797,10 +800,10 @@ function DataVizStudio11(){
 
   return(
     <div style={{minHeight:"100vh",background:"#0a0a0f",color:"#e0e0e0",fontFamily:"monospace",paddingBottom:40}}>
-      <link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&display=swap" rel="stylesheet"/>
+      <link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=Dancing+Script:wght@700&display=swap" rel="stylesheet"/>
 
       {/* Header */}
-      <div style={{borderBottom:"1px solid #1e1e2e",padding:"13px 18px",display:"flex",alignItems:"center",gap:12,background:"#0d0d18"}}>
+      <div style={{borderBottom:"1px solid #1e1e2e",padding:"13px 18px",display:"flex",alignItems:"center",gap:12,rowGap:8,flexWrap:"wrap",background:"#0d0d18"}}>
         <div style={{width:28,height:28,background:"linear-gradient(135deg,#F7931A,#E84142)",borderRadius:7,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13}}>📊</div>
         <div style={{flex:1}}>
           <div style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:15,color:"#fff"}}>Graphics Hot AF</div>
@@ -815,6 +818,11 @@ function DataVizStudio11(){
               color:stage===s?"#F7931A":stage===STAGE_CHART&&s!==STAGE_COLLECT?"#26A17B":"#333"}}>{label}
             </div>
           ))}
+        </div>
+        {/* Version banner — when the live site was last updated */}
+        <div style={{textAlign:"right",lineHeight:1.1,marginLeft:4}}>
+          <div style={{fontFamily:"'Dancing Script',cursive",fontWeight:700,fontSize:21,color:"#fff"}}>Hello World</div>
+          <div style={{fontSize:8,color:"#555",letterSpacing:0.5,marginTop:1}}>Updated {BUILD_STAMP}</div>
         </div>
       </div>
 
