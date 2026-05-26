@@ -416,6 +416,11 @@ function Legend({data,colors}){
   </div>;
 }
 
+// Small section heading used to group the Edit & Format controls.
+function SectionLabel({children,first}){
+  return <div style={{fontSize:8,color:"#666",letterSpacing:1.5,fontWeight:700,marginTop:first?2:16,paddingTop:first?0:12,borderTop:first?"none":"1px solid #17171f"}}>{children}</div>;
+}
+
 function parseCSV(text){
   const lines=text.trim().split("\n").filter(l=>l.trim());
   if(lines.length<2)return null;
@@ -441,24 +446,39 @@ function validateData(rows){
   return issues;
 }
 
-function DataTable({data}){
+// Editable data grid for the Review stage: edit labels/values, add, delete, reorder.
+// Values are held as typed strings; the main component coerces to numbers on approve.
+function EditableDataTable({rows,onChange}){
+  const upd=(i,field,val)=>onChange(rows.map((r,j)=>j===i?{...r,[field]:val}:r));
+  const del=i=>onChange(rows.filter((_,j)=>j!==i));
+  const move=(i,d)=>{const j=i+d;if(j<0||j>=rows.length)return;const n=rows.slice();[n[i],n[j]]=[n[j],n[i]];onChange(n);};
+  const add=()=>onChange([...rows,{label:"",value:""}]);
+  const cell={padding:"3px 6px",fontFamily:"monospace",verticalAlign:"middle"};
+  const inp={width:"100%",background:"#070710",border:"1px solid #1e1e2e",borderRadius:5,color:"#e0e0e0",padding:"6px 7px",fontSize:13,fontFamily:"monospace",outline:"none",boxSizing:"border-box"};
+  const icon=extra=>({background:"transparent",border:"1px solid #2a2a3e",borderRadius:5,color:"#888",cursor:"pointer",fontSize:11,fontFamily:"monospace",padding:"4px 7px",...extra});
   return <div style={{overflowX:"auto",marginTop:4}}>
     <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
       <thead><tr style={{borderBottom:"1px solid #1e1e2e"}}>
-        {["#","LABEL","VALUE"].map(h=><th key={h} style={{padding:"5px 8px",textAlign:h==="VALUE"?"right":"left",color:"#555",fontWeight:700,fontFamily:"monospace"}}>{h}</th>)}
+        {["#","LABEL","VALUE",""].map((h,k)=><th key={k} style={{padding:"5px 6px",textAlign:h==="VALUE"?"right":"left",color:"#555",fontWeight:700,fontFamily:"monospace"}}>{h}</th>)}
       </tr></thead>
-      <tbody>{data.map((d,i)=><tr key={i} style={{borderBottom:"1px solid #111"}}>
-        <td style={{padding:"4px 8px",color:"#444",fontFamily:"monospace"}}>{i+1}</td>
-        <td style={{padding:"4px 8px",color:"#ccc",fontFamily:"monospace"}}>{d.label}</td>
-        <td style={{padding:"4px 8px",textAlign:"right",color:"#F7931A",fontFamily:"monospace"}}>{d.value}</td>
+      <tbody>{rows.map((d,i)=><tr key={i} style={{borderBottom:"1px solid #111"}}>
+        <td style={{...cell,color:"#444"}}>{i+1}</td>
+        <td style={cell}><input value={d.label} onChange={e=>upd(i,"label",e.target.value)} placeholder="label" style={inp}/></td>
+        <td style={{...cell,width:104}}><input value={d.value} onChange={e=>upd(i,"value",e.target.value)} inputMode="decimal" placeholder="0" style={{...inp,textAlign:"right",color:"#F7931A"}}/></td>
+        <td style={{...cell,whiteSpace:"nowrap",textAlign:"right"}}>
+          <button onClick={()=>move(i,-1)} disabled={i===0} title="Move up" style={icon({opacity:i===0?0.3:1})}>↑</button>
+          <button onClick={()=>move(i,1)} disabled={i===rows.length-1} title="Move down" style={icon({opacity:i===rows.length-1?0.3:1,marginLeft:4})}>↓</button>
+          <button onClick={()=>del(i)} title="Delete row" style={icon({marginLeft:4,color:"#E84142",borderColor:"#E8414233"})}>✕</button>
+        </td>
       </tr>)}</tbody>
     </table>
+    <button onClick={add} style={{marginTop:8,padding:"7px 12px",borderRadius:6,background:"transparent",border:"1px dashed #2a2a3e",color:"#888",cursor:"pointer",fontSize:11,fontFamily:"monospace"}}>＋ Add row</button>
   </div>;
 }
 
 // ── Direct Anthropic API call (browser-side, no backend) ────────────────────────
 const API_KEY_STORE="ghaf_anthropic_api_key";
-const GEN_SYSTEM_PROMPT="You generate datasets for a charting tool. Given the user's description, produce real, accurate figures when you know them. Return: a concise human-readable `title`; `x_label` = what the row labels represent (e.g. \"Year\", \"Country\"); `y_label` = what the values represent INCLUDING units (e.g. \"Rate (%)\", \"GDP (Trillion USD)\", \"Holders (BTC)\"); `chart_type` = the best fit (Line for time series/trends, Bar for category comparisons, Pie or Donut for parts of a whole); and up to 20 `rows`, each with a `label` and a numeric `value` (plain number only — no units, no thousands separators, no percent signs).";
+const GEN_SYSTEM_PROMPT="You generate datasets for a charting tool. Given the user's description, produce real, accurate figures when you know them. Return: a concise human-readable `title`; `x_label` = what the row labels represent (e.g. \"Year\", \"Country\"); `y_label` = what the values represent INCLUDING units (e.g. \"Rate (%)\", \"GDP (Trillion USD)\", \"Holders (BTC)\"); `chart_type` = the best fit (Line for time series/trends, Bar for category comparisons, Pie or Donut for parts of a whole); and up to 20 `rows`, each with a `label` and a numeric `value` (plain number only — no units, no thousands separators, no percent signs). If you use web search, base the figures on the sources you find and add a `source` object with `name` (e.g. \"World Bank\") and `url` for the primary source. Respond with a single JSON object and nothing else — no prose, no code fences.";
 const GEN_SCHEMA={
   type:"object",
   properties:{
@@ -477,10 +497,34 @@ function stripCodeFences(t){
   if(s.startsWith("```")) s=s.replace(/^```[a-zA-Z]*\s*\n?/,"").replace(/\n?```\s*$/,"").trim();
   return s;
 }
+// Pull a JSON object out of model text that may be wrapped in prose/citations
+// (web-search answers aren't pure JSON the way structured-output answers are).
+function extractJsonObject(text){
+  const s=stripCodeFences(text);
+  try{ return JSON.parse(s); }catch(e){}
+  const i=s.indexOf("{"), j=s.lastIndexOf("}");
+  if(i>=0&&j>i){ try{ return JSON.parse(s.slice(i,j+1)); }catch(e){} }
+  return null;
+}
 
 // Calls Claude directly from the browser. Returns {title,xLabel,yLabel,chartType,rows}
 // (rows: [{label,value}]) or throws a friendly Error.
-async function generateDatasetWithClaude(apiKey,description){
+async function generateDatasetWithClaude(apiKey,description,opts){
+  opts=opts||{};
+  const model=opts.model||"claude-opus-4-7";
+  const useWeb=!!opts.webSearch;
+  const body={
+    model,
+    max_tokens:useWeb?3000:2048,
+    // System prompt is stable across calls → cache it. (Short, so it may fall
+    // under the model's minimum cacheable size and just not cache — harmless.)
+    system:[{type:"text",text:GEN_SYSTEM_PROMPT,cache_control:{type:"ephemeral"}}],
+    messages:[{role:"user",content:`Dataset to generate:\n\n${description}`}],
+  };
+  // Web search (server-side tool) yields current, sourced figures but isn't combined
+  // with structured output; we parse the JSON object out of the answer text instead.
+  if(useWeb) body.tools=[{type:"web_search_20250305",name:"web_search",max_uses:5}];
+  else body.output_config={format:{type:"json_schema",schema:GEN_SCHEMA}};
   let resp;
   try{
     resp=await fetch("https://api.anthropic.com/v1/messages",{
@@ -491,15 +535,7 @@ async function generateDatasetWithClaude(apiKey,description){
         "anthropic-version":"2023-06-01",
         "anthropic-dangerous-direct-browser-access":"true",   // enables CORS for browser calls
       },
-      body:JSON.stringify({
-        model:"claude-opus-4-7",
-        max_tokens:2048,
-        // System prompt is stable across calls → cache it. (Short, so it may fall
-        // under the model's minimum cacheable size and just not cache — harmless.)
-        system:[{type:"text",text:GEN_SYSTEM_PROMPT,cache_control:{type:"ephemeral"}}],
-        output_config:{format:{type:"json_schema",schema:GEN_SCHEMA}},   // structured output
-        messages:[{role:"user",content:`Dataset to generate:\n\n${description}`}],
-      }),
+      body:JSON.stringify(body),
     });
   }catch(e){ throw new Error("Couldn't reach Anthropic — check your internet connection."); }
 
@@ -519,18 +555,20 @@ async function generateDatasetWithClaude(apiKey,description){
   if(data.stop_reason==="max_tokens") throw new Error("Response was cut off — try a smaller / simpler dataset.");
   const text=(data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("").trim();
   if(!text) throw new Error("Claude returned an empty response — try again.");
-  let obj;
-  try{ obj=JSON.parse(stripCodeFences(text)); }catch(e){ throw new Error("Couldn't parse Claude's response — try again."); }
+  const obj=extractJsonObject(text);
+  if(!obj) throw new Error("Couldn't parse Claude's response — try again.");
   const rows=(obj.rows||[])
     .map(r=>({label:String(r&&r.label!=null?r.label:"").trim(),value:Number(r&&r.value)}))
     .filter(r=>r.label&&!isNaN(r.value));
   if(!rows.length) throw new Error("Claude returned no usable data rows — try rephrasing.");
   const types=["Bar","Line","Pie","Donut"];
+  const src=obj.source&&obj.source.name?{name:String(obj.source.name).trim(),url:obj.source.url?String(obj.source.url).trim():""}:null;
   return {
     title:(obj.title||description).trim(),
     xLabel:(obj.x_label||"").trim(),
     yLabel:(obj.y_label||"").trim(),
     chartType:types.includes(obj.chart_type)?obj.chart_type:"Bar",
+    source:src,
     rows,
   };
 }
@@ -581,6 +619,8 @@ function DataVizStudio11(){
   const [keySaved,setKeySaved]=useState(false);
   const [generating,setGenerating]=useState(false);
   const [genError,setGenError]=useState("");
+  const [genModel,setGenModel]=useState("claude-opus-4-7");   // model for Ask Claude
+  const [genWeb,setGenWeb]=useState(true);                    // use web search for current, sourced data
 
   useEffect(()=>{ try{const k=localStorage.getItem(API_KEY_STORE);if(k){setApiKey(k);setKeySaved(true);}}catch(e){} },[]);
 
@@ -598,11 +638,12 @@ function DataVizStudio11(){
     if(!promptText.trim()){setGenError("Describe the data you want first.");return;}
     setGenError(""); setGenerating(true);
     try{
-      const res=await generateDatasetWithClaude(k,promptText.trim());
+      const res=await generateDatasetWithClaude(k,promptText.trim(),{model:genModel,webSearch:genWeb});
       const data=res.rows;
       const csvLines=["Label,Value",...data.map(d=>`${d.label},${d.value}`)].join("\n");
       setCsvText(csvLines);
-      setPending({title:res.title,data,source:null,chartType:res.chartType,notes:"Generated by Claude — verify the numbers before presenting.",csvExport:csvLines,xLabel:res.xLabel,yLabel:res.yLabel});
+      const notes=genWeb?(res.source?`Generated by Claude with web search — sourced from ${res.source.name}. Verify before presenting.`:"Generated by Claude with web search — verify the numbers before presenting."):"Generated by Claude from model knowledge — verify the numbers before presenting.";
+      setPending({title:res.title,data,source:res.source||null,chartType:res.chartType,notes,csvExport:csvLines,xLabel:res.xLabel,yLabel:res.yLabel});
       setValidationIssues(validateData(data)); setSavedCSV(false); setStage(STAGE_REVIEW);
     }catch(e){ setGenError(e.message||"Generation failed."); }
     finally{ setGenerating(false); }
@@ -638,9 +679,21 @@ function DataVizStudio11(){
     });
   };
 
+  // Live-edit the staged data (Review stage): coerce nothing yet, just re-derive the
+  // CSV preview and validation so the user sees feedback as they type.
+  const setPendingData=(rows)=>{
+    const csvLines=["Label,Value",...rows.map(d=>`${d.label},${d.value}`)].join("\n");
+    const numified=rows.map(r=>({label:String(r.label).trim(),value:Number(r.value)}));
+    setPending(p=>p?{...p,data:rows,csvExport:csvLines}:p);
+    setValidationIssues(validateData(numified));
+  };
+
   const handleApprove=()=>{
-    setChartData(pending); setChartType(pending.chartType);
-    setEditTitle(pending.title||""); setAxisX(pending.xLabel||""); setAxisY(pending.yLabel||"");
+    const data=pending.data.map(r=>({label:String(r.label).trim(),value:Number(r.value)})).filter(r=>r.label&&!isNaN(r.value));
+    if(!data.length){alert("Add at least one row with a label and a number before graphing.");return;}
+    const approved={...pending,data,csvExport:["Label,Value",...data.map(d=>`${d.label},${d.value}`)].join("\n")};
+    setChartData(approved); setChartType(approved.chartType);
+    setEditTitle(approved.title||""); setAxisX(approved.xLabel||""); setAxisY(approved.yLabel||"");
     setIncZero(false); setGridTicks(5); setValueMode("auto");
     setTheme("dark"); setPalette("Default"); setSmooth(false); setYMin(""); setYMax("");
     setMaxSlices(0); setShowLegend(true); setPieLabels("percent"); setPieName(false);
@@ -822,9 +875,25 @@ function DataVizStudio11(){
                   <textarea value={promptText} onChange={e=>setPromptText(e.target.value)}
                     placeholder={"e.g. 10-year treasury yield by year 1945–2024"}
                     style={{width:"100%",minHeight:70,background:"#070710",border:"1px solid #627EEA",borderRadius:6,color:"#e0e0e0",padding:"9px 11px",fontSize:16,fontFamily:"monospace",resize:"none",boxSizing:"border-box",outline:"none",WebkitUserSelect:"text",userSelect:"text",touchAction:"manipulation",position:"relative",zIndex:10}}/>
+                  <div style={{display:"flex",gap:14,flexWrap:"wrap",alignItems:"center",marginTop:10}}>
+                    <label style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer"}}>
+                      <input type="checkbox" checked={genWeb} onChange={e=>setGenWeb(e.target.checked)} style={{accentColor:"#26A17B"}}/>
+                      <span style={{fontSize:9,color:"#888",letterSpacing:1,fontWeight:700}}>🔍 SEARCH&nbsp;THE&nbsp;WEB</span>
+                    </label>
+                    <label style={{display:"flex",alignItems:"center",gap:6}}>
+                      <span style={{fontSize:9,color:"#555",letterSpacing:1,fontWeight:700}}>MODEL</span>
+                      <select value={genModel} onChange={e=>setGenModel(e.target.value)}
+                        style={{background:"#070710",border:"1px solid #2a2a3e",borderRadius:6,color:"#e0e0e0",padding:"5px 7px",fontSize:12,fontFamily:"monospace",outline:"none"}}>
+                        <option value="claude-haiku-4-5-20251001">Haiku · fast/cheap</option>
+                        <option value="claude-sonnet-4-6">Sonnet · balanced</option>
+                        <option value="claude-opus-4-7">Opus · best</option>
+                      </select>
+                    </label>
+                  </div>
                   <button onClick={handleGenerate} disabled={generating} style={{marginTop:10,padding:"11px 22px",borderRadius:6,background:generating?"#1a1000":"linear-gradient(135deg,#627EEA,#26A17B)",border:"none",color:"#fff",cursor:generating?"default":"pointer",fontSize:13,fontFamily:"monospace",fontWeight:700,width:"100%",opacity:generating?0.8:1}}>
-                    {generating?"⏳ Asking Claude…":"✨ Generate with Claude (auto)"}
+                    {generating?(genWeb?"⏳ Searching the web…":"⏳ Asking Claude…"):(genWeb?"✨ Research with Claude (web)":"✨ Generate with Claude")}
                   </button>
+                  <div style={{fontSize:10,color:"#555",marginTop:6,lineHeight:1.5}}>{genWeb?"Searches the web for current figures and auto-fills the source. Costs a bit more per run.":"Uses the model's own knowledge — fast, but figures may be dated and unsourced."}</div>
                   {genError&&<div style={{marginTop:8,color:"#E84142",fontSize:11,lineHeight:1.5}}>{genError}</div>}
                   <button onClick={copyPrompt} style={{marginTop:8,padding:"8px 16px",borderRadius:6,background:"transparent",border:`1px solid ${promptCopied?"#26A17B":"#2a2a3e"}`,color:promptCopied?"#26A17B":"#888",cursor:"pointer",fontSize:11,fontFamily:"monospace",width:"100%"}}>
                     {promptCopied?"✓ Copied — paste into Claude chat, then paste its reply below":"📋 Or copy a prompt to run manually in Claude chat"}
@@ -884,7 +953,8 @@ function DataVizStudio11(){
 
             {pending.notes&&<div style={{marginBottom:10,padding:"8px 12px",background:"#0d1220",border:"1px solid #627EEA33",borderRadius:6,fontSize:11,color:"#627EEA"}}>{pending.notes}</div>}
 
-            <DataTable data={pending.data}/>
+            <div style={{fontSize:9,color:"#444",letterSpacing:1,marginBottom:5}}>EDIT DATA <span style={{color:"#2a2a3e"}}>(fix values, add / delete / reorder rows)</span></div>
+            <EditableDataTable rows={pending.data} onChange={setPendingData}/>
 
             {/* CSV preview */}
             <div style={{marginTop:12}}>
@@ -913,8 +983,8 @@ function DataVizStudio11(){
 
             {/* Edit & format — applies to live chart + GIF export */}
             <div style={{background:"#0f0f1a",border:"1px solid #1e1e2e",borderRadius:10,padding:12}}>
-              <div style={{fontSize:9,color:"#444",letterSpacing:1,marginBottom:8}}>EDIT &amp; FORMAT</div>
-              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+              <SectionLabel first>TITLE &amp; AXES</SectionLabel>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:6}}>
                 <label style={{display:"flex",flexDirection:"column",gap:3,flex:2,minWidth:160}}>
                   <span style={{fontSize:8,color:"#555",letterSpacing:1,fontWeight:700}}>TITLE</span>
                   <input value={editTitle} onChange={e=>setEditTitle(e.target.value)} placeholder="Chart title"
@@ -933,8 +1003,9 @@ function DataVizStudio11(){
                   </label>
                 </>}
               </div>
+              {(chartType==="Bar"||chartType==="Line")&&<SectionLabel>SCALE &amp; VALUES</SectionLabel>}
               {(chartType==="Bar"||chartType==="Line")&&(
-                <div style={{display:"flex",gap:16,flexWrap:"wrap",alignItems:"center",marginTop:10}}>
+                <div style={{display:"flex",gap:16,flexWrap:"wrap",alignItems:"center",marginTop:6}}>
                   <label style={{display:"flex",alignItems:"center",gap:6}}>
                     <span style={{fontSize:8,color:"#555",letterSpacing:1,fontWeight:700}}>GRIDLINES</span>
                     <select value={gridTicks} onChange={e=>setGridTicks(Number(e.target.value))}
@@ -969,8 +1040,9 @@ function DataVizStudio11(){
                   </label>
                 </div>
               )}
+              {(chartType==="Pie"||chartType==="Donut")&&<SectionLabel>SLICES &amp; LABELS</SectionLabel>}
               {(chartType==="Pie"||chartType==="Donut")&&(
-                <div style={{display:"flex",gap:16,flexWrap:"wrap",alignItems:"center",marginTop:10}}>
+                <div style={{display:"flex",gap:16,flexWrap:"wrap",alignItems:"center",marginTop:6}}>
                   <label style={{display:"flex",alignItems:"center",gap:6}}>
                     <span style={{fontSize:8,color:"#555",letterSpacing:1,fontWeight:700}}>MAX&nbsp;SLICES</span>
                     <select value={maxSlices} onChange={e=>{setMaxSlices(Number(e.target.value));setAnimKey(k=>k+1);}}
@@ -992,7 +1064,8 @@ function DataVizStudio11(){
                   </label>
                 </div>
               )}
-              <div style={{display:"flex",gap:16,flexWrap:"wrap",alignItems:"center",marginTop:10}}>
+              <SectionLabel>STYLE</SectionLabel>
+              <div style={{display:"flex",gap:16,flexWrap:"wrap",alignItems:"center",marginTop:6}}>
                 <label style={{display:"flex",alignItems:"center",gap:6}}>
                   <span style={{fontSize:8,color:"#555",letterSpacing:1,fontWeight:700}}>THEME</span>
                   <select value={theme} onChange={e=>setTheme(e.target.value)}
@@ -1012,7 +1085,8 @@ function DataVizStudio11(){
                   <span style={{fontSize:8,color:"#555",letterSpacing:1,fontWeight:700}}>LEGEND</span>
                 </label>}
               </div>
-              <div style={{display:"flex",gap:16,flexWrap:"wrap",alignItems:"center",marginTop:10}}>
+              <SectionLabel>EXPORT SIZE</SectionLabel>
+              <div style={{display:"flex",gap:16,flexWrap:"wrap",alignItems:"center",marginTop:6}}>
                 <label style={{display:"flex",alignItems:"center",gap:6}}>
                   <span style={{fontSize:8,color:"#555",letterSpacing:1,fontWeight:700}}>ASPECT</span>
                   <select value={aspect} onChange={e=>{setAspect(e.target.value);setAnimKey(k=>k+1);}}
@@ -1029,7 +1103,8 @@ function DataVizStudio11(){
                 </label>
                 {exportLayout&&<span style={{fontSize:9,color:"#444"}}>PNG/copy ≈ {exportLayout.W*scale}×{exportLayout.H*scale}px · GIF capped at 2×</span>}
               </div>
-              <div style={{display:"flex",gap:16,flexWrap:"wrap",alignItems:"center",marginTop:10}}>
+              <SectionLabel>ANIMATION</SectionLabel>
+              <div style={{display:"flex",gap:16,flexWrap:"wrap",alignItems:"center",marginTop:6}}>
                 <label style={{display:"flex",alignItems:"center",gap:6}}>
                   <span style={{fontSize:8,color:"#555",letterSpacing:1,fontWeight:700}}>SPEED</span>
                   <input type="range" min={0.5} max={3} step={0.25} value={speed}
