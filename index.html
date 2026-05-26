@@ -110,6 +110,30 @@ function limitSlices(data,maxN){
   return [...top,{label:"Other",value:otherVal}];
 }
 
+// ── Multi-series data model ─────────────────────────────────────────────────────
+// A dataset = {series:[names], rows:[{label, values:[n,...]}]}. Each row also keeps
+// `value` = values[0] so every single-series code path keeps working unchanged.
+// Multi-series rendering kicks in only when series.length > 1.
+function valsOf(row){ return (row.values&&row.values.length) ? row.values : [row.value]; }
+function isMulti(seriesNames){ return Array.isArray(seriesNames) && seriesNames.length>1; }
+// Normalize any incoming rows (string or numeric values) into the canonical model.
+function buildDataset(seriesNames,rows){
+  const names=(seriesNames&&seriesNames.length)?seriesNames.map(s=>String(s)):["Value"];
+  const norm=(rows||[]).map(r=>{
+    let vals=(r.values&&r.values.length)?r.values.slice():[r.value];
+    vals=names.map((_,k)=>Number(vals[k]));           // coerce + align to column count
+    return {label:String(r.label==null?"":r.label), value:vals[0], values:vals};
+  });
+  return {series:names, rows:norm};
+}
+// Serialize to multi-column CSV (Label,S1,S2,...). Tolerates string cell values.
+function rowsToCSV(seriesNames,rows){
+  const names=(seriesNames&&seriesNames.length)?seriesNames:["Value"];
+  const header=["Label",...names].join(",");
+  const lines=(rows||[]).map(r=>{const v=r.values&&r.values.length?r.values:[r.value];return [r.label,...names.map((_,k)=>v[k]!=null?v[k]:"")].join(",");});
+  return [header,...lines].join("\n");
+}
+
 // Axis range/ticks honoring include-zero and manual min/max overrides.
 function buildAxis(dataMin,dataMax,opts){
   opts=opts||{};
@@ -170,8 +194,9 @@ function drawPie(ctx,W,H,data,pv,donut,bg,opts){
 function drawBar(ctx,W,H,data,pv,bg,opts){
   opts=opts||{};
   const th=themeOf(opts), colors=paletteOf(opts);
+  const multi=isMulti(opts.series), sc=multi?opts.series.length:1;
   const xLab=opts.xLabel&&opts.xLabel.trim(), yLab=opts.yLabel&&opts.yLabel.trim();
-  const dataMax=Math.max(...data.map(d=>Math.abs(d.value)))||1;
+  const dataMax=Math.max(...data.map(d=>Math.max(...valsOf(d).map(v=>Math.abs(Number(v)||0)))))||1;
   const {niceMin,niceMax,step,ticks}=buildAxis(0,dataMax,opts), denom=(niceMax-niceMin)||1;
   const padT=14, padB=34+(xLab?16:0), padL=42+(yLab?14:0), padR=14;
   const plotW=W-padL-padR, plotH=H-padT-padB, gap=plotW/data.length, bw=gap*0.6;
@@ -185,15 +210,30 @@ function drawBar(ctx,W,H,data,pv,bg,opts){
   });
   ctx.textBaseline="alphabetic";
   const lstep=labelStep(data.length,10);   // thin x labels
-  const showValues=opts.valueLabels==="on"?true:opts.valueLabels==="off"?false:data.length<=12;
   const baseY=H-padB;
-  data.forEach((item,i)=>{
-    const bh=Math.max(0,(Math.abs(item.value)-niceMin)/denom)*plotH*pv,x=padL+i*gap+(gap-bw)/2,y=baseY-bh;
-    const c=colors[i%colors.length], g=ctx.createLinearGradient(0,y,0,baseY);g.addColorStop(0,c);g.addColorStop(1,c+"33");
-    ctx.fillStyle=g;ctx.beginPath();ctx.roundRect(x,y,bw,bh,[4,4,0,0]);ctx.fill();
-    if(i%lstep===0||i===data.length-1){ctx.font="9px monospace";ctx.fillStyle=th.axisLabel;ctx.textAlign="center";ctx.fillText(item.label.length>9?item.label.slice(0,8)+"…":item.label,x+bw/2,baseY+12);}
-    if(showValues&&pv>0.85){ctx.globalAlpha=Math.min(1,(pv-0.85)/0.15);ctx.font="bold 10px monospace";ctx.fillStyle=th.value;ctx.fillText(fmtNum(item.value),x+bw/2,y-5);ctx.globalAlpha=1;}
-  });
+  const xlabel=(item,cx)=>{ctx.font="9px monospace";ctx.fillStyle=th.axisLabel;ctx.textAlign="center";ctx.fillText(item.label.length>9?item.label.slice(0,8)+"…":item.label,cx,baseY+12);};
+  if(multi){
+    // Grouped bars: one cluster per category, one bar per series (colored by series).
+    const clusterW=gap*0.82, sbw=clusterW/sc;
+    data.forEach((item,i)=>{
+      const vals=valsOf(item), cx0=padL+i*gap+(gap-clusterW)/2;
+      vals.forEach((vv,s)=>{
+        const v=Math.abs(Number(vv)||0), bh=Math.max(0,(v-niceMin)/denom)*plotH*pv, x=cx0+s*sbw, y=baseY-bh;
+        const c=colors[s%colors.length], g=ctx.createLinearGradient(0,y,0,baseY);g.addColorStop(0,c);g.addColorStop(1,c+"33");
+        ctx.fillStyle=g;ctx.beginPath();ctx.roundRect(x,y,Math.max(1,sbw-1.5),bh,[3,3,0,0]);ctx.fill();
+      });
+      if(i%lstep===0||i===data.length-1) xlabel(item,padL+i*gap+gap/2);
+    });
+  } else {
+    const showValues=opts.valueLabels==="on"?true:opts.valueLabels==="off"?false:data.length<=12;
+    data.forEach((item,i)=>{
+      const bh=Math.max(0,(Math.abs(item.value)-niceMin)/denom)*plotH*pv,x=padL+i*gap+(gap-bw)/2,y=baseY-bh;
+      const c=colors[i%colors.length], g=ctx.createLinearGradient(0,y,0,baseY);g.addColorStop(0,c);g.addColorStop(1,c+"33");
+      ctx.fillStyle=g;ctx.beginPath();ctx.roundRect(x,y,bw,bh,[4,4,0,0]);ctx.fill();
+      if(i%lstep===0||i===data.length-1) xlabel(item,x+bw/2);
+      if(showValues&&pv>0.85){ctx.globalAlpha=Math.min(1,(pv-0.85)/0.15);ctx.font="bold 10px monospace";ctx.fillStyle=th.value;ctx.textAlign="center";ctx.fillText(fmtNum(item.value),x+bw/2,y-5);ctx.globalAlpha=1;}
+    });
+  }
   drawAxisTitles(ctx,padL,plotW,padT,plotH,H,xLab,yLab,th.axisTitle);
 }
 
@@ -206,36 +246,49 @@ function curveThrough(ctx,pts){
 }
 function drawLine(ctx,W,H,data,pv,bg,opts){
   opts=opts||{};
-  const th=themeOf(opts), lc=paletteOf(opts)[0], smooth=!!opts.smooth, sep=bg||th.bg;
+  const th=themeOf(opts), palette=paletteOf(opts), smooth=!!opts.smooth, sep=bg||th.bg;
+  const multi=isMulti(opts.series), sc=multi?opts.series.length:1;
   const xLab=opts.xLabel&&opts.xLabel.trim(), yLab=opts.yLabel&&opts.yLabel.trim();
-  const maxV=Math.max(...data.map(d=>d.value)),minV=Math.min(...data.map(d=>d.value));
+  let maxV=-Infinity,minV=Infinity;
+  data.forEach(d=>valsOf(d).forEach(v=>{const n=Number(v)||0;if(n>maxV)maxV=n;if(n<minV)minV=n;}));
+  if(!isFinite(maxV)){maxV=1;minV=0;}
   const {niceMin,niceMax,step,ticks}=buildAxis(minV,maxV,opts), denom=(niceMax-niceMin)||1;
   const padT=14, padB=32+(xLab?16:0), padL=44+(yLab?14:0), padR=14;
   const plotW=W-padL-padR, plotH=H-padT-padB, baseY=H-padB;
-  const pts=data.map((d,i)=>({x:padL+(i/Math.max(data.length-1,1))*plotW,y:padT+(1-(d.value-niceMin)/denom)*plotH,label:d.label,val:d.value}));
-  const vis=Math.max(2,Math.ceil(pts.length*pv)),vpts=pts.slice(0,vis);
+  const xAt=i=>padL+(i/Math.max(data.length-1,1))*plotW;
+  const yAt=v=>padT+(1-(Number(v||0)-niceMin)/denom)*plotH;
+  const vis=Math.max(2,Math.ceil(data.length*pv));
   if(bg){ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);}else ctx.clearRect(0,0,W,H);
   ctx.textBaseline="middle";
-  ticks.forEach(v=>{const y=padT+(1-(v-niceMin)/denom)*plotH;ctx.strokeStyle=th.grid;ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(padL,y);ctx.lineTo(W-padR,y);ctx.stroke();ctx.font="8px monospace";ctx.fillStyle=th.tick;ctx.textAlign="right";ctx.fillText(axisTickLabel(v,step),padL-5,y);});
+  ticks.forEach(v=>{const y=yAt(v);ctx.strokeStyle=th.grid;ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(padL,y);ctx.lineTo(W-padR,y);ctx.stroke();ctx.font="8px monospace";ctx.fillStyle=th.tick;ctx.textAlign="right";ctx.fillText(axisTickLabel(v,step),padL-5,y);});
+  const lstep=labelStep(data.length,10);
   // Optional vertical gridlines, aligned with the (thinned) x-axis labels.
-  if(opts.vGrid){const vstep=labelStep(data.length,10);ctx.strokeStyle=th.grid;ctx.lineWidth=1;
-    pts.forEach((q,i)=>{if(i%vstep===0||i===pts.length-1){ctx.beginPath();ctx.moveTo(q.x,padT);ctx.lineTo(q.x,baseY);ctx.stroke();}});}
+  if(opts.vGrid){ctx.strokeStyle=th.grid;ctx.lineWidth=1;
+    data.forEach((d,i)=>{if(i%lstep===0||i===data.length-1){const x=xAt(i);ctx.beginPath();ctx.moveTo(x,padT);ctx.lineTo(x,baseY);ctx.stroke();}});}
   ctx.textBaseline="alphabetic";
-  if(vpts.length>=2){
-    const g=ctx.createLinearGradient(0,padT,0,baseY);g.addColorStop(0,lc+"44");g.addColorStop(1,lc+"00");
-    ctx.beginPath();ctx.moveTo(vpts[0].x,baseY);ctx.lineTo(vpts[0].x,vpts[0].y);
-    if(smooth)curveThrough(ctx,vpts);else vpts.forEach((q,i)=>i&&ctx.lineTo(q.x,q.y));
-    ctx.lineTo(vpts[vpts.length-1].x,baseY);ctx.closePath();ctx.fillStyle=g;ctx.fill();
+  // One line per series; in single-series mode this is identical to before (with area fill).
+  for(let s=0;s<sc;s++){
+    const lc=palette[s%palette.length];
+    const pts=data.map((d,i)=>({x:xAt(i),y:yAt(valsOf(d)[s]),val:Number(valsOf(d)[s])||0}));
+    const vpts=pts.slice(0,vis);
+    if(vpts.length<2)continue;
+    if(!multi){
+      const g=ctx.createLinearGradient(0,padT,0,baseY);g.addColorStop(0,lc+"44");g.addColorStop(1,lc+"00");
+      ctx.beginPath();ctx.moveTo(vpts[0].x,baseY);ctx.lineTo(vpts[0].x,vpts[0].y);
+      if(smooth)curveThrough(ctx,vpts);else vpts.forEach((q,i)=>i&&ctx.lineTo(q.x,q.y));
+      ctx.lineTo(vpts[vpts.length-1].x,baseY);ctx.closePath();ctx.fillStyle=g;ctx.fill();
+    }
     ctx.beginPath();ctx.moveTo(vpts[0].x,vpts[0].y);
     if(smooth)curveThrough(ctx,vpts);else vpts.forEach((q,i)=>i&&ctx.lineTo(q.x,q.y));
     ctx.strokeStyle=lc;ctx.lineWidth=2.5;ctx.lineJoin="round";ctx.stroke();
-    const lstep=labelStep(data.length,10), showVals=opts.valueLabels==="on";
+    const showVals=!multi&&opts.valueLabels==="on";
     vpts.forEach((q,i)=>{ctx.beginPath();ctx.arc(q.x,q.y,3,0,Math.PI*2);ctx.fillStyle=lc;ctx.fill();ctx.strokeStyle=sep;ctx.lineWidth=1.5;ctx.stroke();
-      const tick=i%lstep===0||i===data.length-1;
-      if(tick){ctx.font="8px monospace";ctx.fillStyle=th.axisLabel;ctx.textAlign="center";ctx.fillText(q.label,q.x,baseY+12);}
-      if(showVals&&tick){ctx.font="bold 9px monospace";ctx.fillStyle=th.value;ctx.textAlign="center";ctx.fillText(fmtNum(q.val),q.x,q.y-7);}
+      if(showVals&&(i%lstep===0||i===data.length-1)){ctx.font="bold 9px monospace";ctx.fillStyle=th.value;ctx.textAlign="center";ctx.fillText(fmtNum(q.val),q.x,q.y-7);}
     });
   }
+  // x-axis category labels (drawn once, thinned)
+  if(vis>=2){ctx.font="8px monospace";ctx.fillStyle=th.axisLabel;ctx.textAlign="center";
+    data.slice(0,vis).forEach((d,i)=>{if(i%lstep===0||i===data.length-1)ctx.fillText(d.label,xAt(i),baseY+12);});}
   drawAxisTitles(ctx,padL,plotW,padT,plotH,H,xLab,yLab,th.axisTitle);
 }
 
@@ -326,11 +379,13 @@ function chartLayout(chartData,chartType,fmt){
   const th=themeOf(fmt), colors=PALETTES[fmt.palette]||COLORS;
   const title=(fmt.title!=null?fmt.title:chartData.title)||"Chart";
   const isPie=chartType==="Pie"||chartType==="Donut";
+  const multi=isMulti(fmt.series)&&(chartType==="Line"||chartType==="Bar");
   const plotData=isPie?limitSlices(chartData.data,fmt.maxSlices):chartData.data;
   const axisOpts={xLabel:fmt.xLabel,yLabel:fmt.yLabel,includeZero:fmt.includeZero,maxTicks:fmt.maxTicks,
-    valueLabels:fmt.valueLabels,smooth:fmt.smooth,vGrid:fmt.vGrid,yMin:fmt.yMin,yMax:fmt.yMax,theme:fmt.theme,colors,pieLabels:fmt.pieLabels,pieName:fmt.pieName};
+    valueLabels:fmt.valueLabels,smooth:fmt.smooth,vGrid:fmt.vGrid,yMin:fmt.yMin,yMax:fmt.yMax,theme:fmt.theme,colors,pieLabels:fmt.pieLabels,pieName:fmt.pieName,series:fmt.series};
   const cd=chartDims(chartType,fmt.aspect), titleH=46;
-  const legend=(isPie&&plotData.length<=40)?plotData:null;   // pie/donut: legend of names always shown
+  // Multi-series → legend of series names; pie/donut → legend of category names.
+  const legend=multi?fmt.series.map(n=>({label:n})):((isPie&&plotData.length<=40)?plotData:null);
   const legendH=legend?Math.ceil(legend.length/3)*20+12:0;
   const srcText=chartData.source&&chartData.source.name?("Source: "+chartData.source.name):null;
   const sourceH=srcText?22:0;
@@ -427,50 +482,69 @@ function SectionLabel({children,first}){
   return <div style={{fontSize:8,color:"#666",letterSpacing:1.5,fontWeight:700,marginTop:first?2:16,paddingTop:first?0:12,borderTop:first?"none":"1px solid #17171f"}}>{children}</div>;
 }
 
+// Parse CSV into {seriesNames, rows}. First column = label; every remaining column is
+// a data series, so "Label,Revenue,Profit" yields a two-series dataset.
 function parseCSV(text){
   const lines=text.trim().split("\n").filter(l=>l.trim());
   if(lines.length<2)return null;
-  return lines.slice(1).map(line=>{
+  const header=lines[0].split(",").map(s=>s.trim().replace(/^"|"$/g,""));
+  const seriesNames=header.length>1?header.slice(1).map(h=>h||"Value"):["Value"];
+  const rows=lines.slice(1).map(line=>{
     const parts=line.split(",").map(p=>p.trim().replace(/^"|"$/g,""));
-    return{label:parts[0],value:parseFloat(parts[1])||0};
-  }).filter(d=>d.label&&!isNaN(d.value));
+    const values=seriesNames.map((_,k)=>{const n=parseFloat(parts[k+1]);return isNaN(n)?0:n;});
+    return {label:parts[0],values};
+  }).filter(r=>r.label);
+  if(!rows.length)return null;
+  return {seriesNames,rows};
 }
 
 function validateData(rows){
   const issues=[];
-  if(!rows||rows.length===0){issues.push("No data rows found.");}
-  else{
-    if(rows.length<2) issues.push("Only 1 data point — charts need at least 2.");
-    if(rows.length>50) issues.push(`${rows.length} rows is a lot — consider trimming to ≤20 for clarity.`);
-    const badVals=rows.filter(r=>isNaN(r.value)||r.value===0);
-    if(badVals.length>0) issues.push(`${badVals.length} row(s) have zero or non-numeric values: ${badVals.slice(0,3).map(r=>r.label).join(", ")}${badVals.length>3?"…":""}`);
-    const dupLabels=rows.map(r=>r.label).filter((v,i,a)=>a.indexOf(v)!==i);
-    if(dupLabels.length>0) issues.push(`Duplicate labels: ${[...new Set(dupLabels)].join(", ")}`);
-    const allSame=rows.every(r=>r.value===rows[0].value);
-    if(allSame&&rows.length>1) issues.push("All values are identical — chart won't be meaningful.");
-  }
+  if(!rows||rows.length===0){issues.push("No data rows found.");return issues;}
+  if(rows.length<2) issues.push("Only 1 data point — charts need at least 2.");
+  if(rows.length>50) issues.push(`${rows.length} rows is a lot — consider trimming to ≤20 for clarity.`);
+  const badVals=rows.filter(r=>valsOf(r).some(v=>v===""||v==null||isNaN(Number(v))));
+  if(badVals.length>0) issues.push(`${badVals.length} row(s) have non-numeric values: ${badVals.slice(0,3).map(r=>r.label).join(", ")}${badVals.length>3?"…":""}`);
+  const dupLabels=rows.map(r=>r.label).filter((v,i,a)=>a.indexOf(v)!==i);
+  if(dupLabels.length>0) issues.push(`Duplicate labels: ${[...new Set(dupLabels)].join(", ")}`);
   return issues;
 }
 
-// Editable data grid for the Review stage: edit labels/values, add, delete, reorder.
-// Values are held as typed strings; the main component coerces to numbers on approve.
-function EditableDataTable({rows,onChange}){
-  const upd=(i,field,val)=>onChange(rows.map((r,j)=>j===i?{...r,[field]:val}:r));
-  const del=i=>onChange(rows.filter((_,j)=>j!==i));
-  const move=(i,d)=>{const j=i+d;if(j<0||j>=rows.length)return;const n=rows.slice();[n[i],n[j]]=[n[j],n[i]];onChange(n);};
-  const add=()=>onChange([...rows,{label:"",value:""}]);
+// Editable data grid for the Review stage: edit labels/values across one or more
+// series, rename/add/remove series columns, and add/delete/reorder rows. Values are
+// held as typed strings; the main component coerces to numbers on approve.
+function EditableDataTable({series,rows,onChange}){
+  const cols=(series&&series.length)?series:["Value"];
+  const valAt=(r,k)=>{const v=r.values&&r.values[k]!=null?r.values[k]:(k===0&&r.value!=null?r.value:"");return v;};
+  const withVals=r=>({...r,values:cols.map((_,k)=>valAt(r,k))});
+  const setCell=(i,k,val)=>onChange(cols,rows.map((r,j)=>{if(j!==i)return r;const nr=withVals(r);nr.values=nr.values.slice();nr.values[k]=val;return nr;}));
+  const setLabel=(i,val)=>onChange(cols,rows.map((r,j)=>j===i?{...r,label:val}:r));
+  const setSeries=(k,val)=>{const ns=cols.slice();ns[k]=val;onChange(ns,rows);};
+  const del=i=>onChange(cols,rows.filter((_,j)=>j!==i));
+  const move=(i,d)=>{const j=i+d;if(j<0||j>=rows.length)return;const n=rows.slice();[n[i],n[j]]=[n[j],n[i]];onChange(cols,n);};
+  const addRow=()=>onChange(cols,[...rows,{label:"",values:cols.map(()=>"")}]);
+  const addCol=()=>onChange([...cols,"Series "+(cols.length+1)],rows.map(r=>{const nr=withVals(r);nr.values=[...nr.values,""];return nr;}));
+  const delCol=k=>{if(cols.length<=1)return;onChange(cols.filter((_,c)=>c!==k),rows.map(r=>{const nr=withVals(r);nr.values=nr.values.filter((_,c)=>c!==k);return nr;}));};
   const cell={padding:"3px 6px",fontFamily:"monospace",verticalAlign:"middle"};
   const inp={width:"100%",background:"#070710",border:"1px solid #2c3446",borderRadius:5,color:"#e0e0e0",padding:"6px 7px",fontSize:13,fontFamily:"monospace",outline:"none",boxSizing:"border-box"};
   const icon=extra=>({background:"transparent",border:"1px solid #2a2a3e",borderRadius:5,color:"#888",cursor:"pointer",fontSize:11,fontFamily:"monospace",padding:"4px 7px",...extra});
   return <div style={{overflowX:"auto",marginTop:4}}>
     <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
       <thead><tr style={{borderBottom:"1px solid #2c3446"}}>
-        {["#","LABEL","VALUE",""].map((h,k)=><th key={k} style={{padding:"5px 6px",textAlign:h==="VALUE"?"right":"left",color:"#555",fontWeight:700,fontFamily:"monospace"}}>{h}</th>)}
+        <th style={{padding:"5px 6px",textAlign:"left",color:"#555",fontWeight:700,fontFamily:"monospace"}}>#</th>
+        <th style={{padding:"5px 6px",textAlign:"left",color:"#555",fontWeight:700,fontFamily:"monospace"}}>LABEL</th>
+        {cols.map((name,k)=><th key={k} style={{padding:"3px 6px"}}>
+          <div style={{display:"flex",alignItems:"center",gap:3}}>
+            <input value={name} onChange={e=>setSeries(k,e.target.value)} placeholder={"series"} style={{...inp,minWidth:70,padding:"4px 6px",fontSize:11,color:"#9aa4b2"}}/>
+            {cols.length>1&&<button onClick={()=>delCol(k)} title="Delete series" style={icon({padding:"2px 5px",color:"#E84142",borderColor:"#E8414233"})}>✕</button>}
+          </div>
+        </th>)}
+        <th></th>
       </tr></thead>
-      <tbody>{rows.map((d,i)=><tr key={i} style={{borderBottom:"1px solid #111"}}>
+      <tbody>{rows.map((d,i)=><tr key={i} style={{borderBottom:"1px solid #161b26"}}>
         <td style={{...cell,color:"#444"}}>{i+1}</td>
-        <td style={cell}><input value={d.label} onChange={e=>upd(i,"label",e.target.value)} placeholder="label" style={inp}/></td>
-        <td style={{...cell,width:104}}><input value={d.value} onChange={e=>upd(i,"value",e.target.value)} inputMode="decimal" placeholder="0" style={{...inp,textAlign:"right",color:"#F7931A"}}/></td>
+        <td style={cell}><input value={d.label} onChange={e=>setLabel(i,e.target.value)} placeholder="label" style={inp}/></td>
+        {cols.map((_,k)=><td key={k} style={{...cell,width:92}}><input value={valAt(d,k)} onChange={e=>setCell(i,k,e.target.value)} inputMode="decimal" placeholder="0" style={{...inp,textAlign:"right",color:"#F7931A"}}/></td>)}
         <td style={{...cell,whiteSpace:"nowrap",textAlign:"right"}}>
           <button onClick={()=>move(i,-1)} disabled={i===0} title="Move up" style={icon({opacity:i===0?0.3:1})}>↑</button>
           <button onClick={()=>move(i,1)} disabled={i===rows.length-1} title="Move down" style={icon({opacity:i===rows.length-1?0.3:1,marginLeft:4})}>↓</button>
@@ -478,23 +552,26 @@ function EditableDataTable({rows,onChange}){
         </td>
       </tr>)}</tbody>
     </table>
-    <button onClick={add} style={{marginTop:8,padding:"7px 12px",borderRadius:6,background:"transparent",border:"1px dashed #2a2a3e",color:"#888",cursor:"pointer",fontSize:11,fontFamily:"monospace"}}>＋ Add row</button>
+    <div style={{display:"flex",gap:8,marginTop:8,flexWrap:"wrap"}}>
+      <button onClick={addRow} style={{padding:"7px 12px",borderRadius:6,background:"transparent",border:"1px dashed #2a2a3e",color:"#888",cursor:"pointer",fontSize:11,fontFamily:"monospace"}}>＋ Add row</button>
+      <button onClick={addCol} style={{padding:"7px 12px",borderRadius:6,background:"transparent",border:"1px dashed #2a2a3e",color:"#888",cursor:"pointer",fontSize:11,fontFamily:"monospace"}}>＋ Add series</button>
+    </div>
   </div>;
 }
 
 // ── Direct Anthropic API call (browser-side, no backend) ────────────────────────
 const API_KEY_STORE="ghaf_anthropic_api_key";
-const GEN_SYSTEM_PROMPT="You generate datasets for a charting tool. Given the user's description, produce real, accurate figures when you know them. Return: a concise human-readable `title`; `x_label` = what the row labels represent (e.g. \"Year\", \"Country\"); `y_label` = what the values represent INCLUDING units (e.g. \"Rate (%)\", \"GDP (Trillion USD)\", \"Holders (BTC)\"); `chart_type` = the best fit (Line for time series/trends, Bar for category comparisons, Pie or Donut for parts of a whole); and up to 20 `rows`, each with a `label` and a numeric `value` (plain number only — no units, no thousands separators, no percent signs). If you use web search, base the figures on the sources you find and add a `source` object with `name` (e.g. \"World Bank\") and `url` for the primary source. Respond with a single JSON object and nothing else — no prose, no code fences.";
+const GEN_SYSTEM_PROMPT="You generate datasets for a charting tool. Given the user's description, produce real, accurate figures when you know them. Return: a concise human-readable `title`; `x_label` = what the row labels represent (e.g. \"Year\", \"Country\"); `series` = an array of 1–4 names for the value columns, each INCLUDING units (e.g. [\"GDP (Trillion USD)\"] for one measure, or [\"Revenue ($B)\",\"Profit ($B)\"], or [\"USA\",\"China\",\"India\"] when comparing several entities over time); use multiple series whenever the request implies more than one measure or entity, otherwise use exactly one. `chart_type` = the best fit (Line for time series/trends, Bar for category comparisons, Pie or Donut for parts of a whole — pie/donut only support one series). Up to 20 `rows`, each with a `label` and a `values` array of plain numbers aligned to `series` (no units, no thousands separators, no percent signs). If you use web search, base the figures on the sources you find and add a `source` object with `name` (e.g. \"World Bank\") and `url` for the primary source. Respond with a single JSON object and nothing else — no prose, no code fences.";
 const GEN_SCHEMA={
   type:"object",
   properties:{
     title:{type:"string"},
     x_label:{type:"string"},
-    y_label:{type:"string"},
+    series:{type:"array",items:{type:"string"}},
     chart_type:{type:"string",enum:["Bar","Line","Pie","Donut"]},
-    rows:{type:"array",items:{type:"object",properties:{label:{type:"string"},value:{type:"number"}},required:["label","value"],additionalProperties:false}},
+    rows:{type:"array",items:{type:"object",properties:{label:{type:"string"},values:{type:"array",items:{type:"number"}}},required:["label","values"],additionalProperties:false}},
   },
-  required:["title","x_label","y_label","chart_type","rows"],
+  required:["title","x_label","series","chart_type","rows"],
   additionalProperties:false,
 };
 
@@ -563,17 +640,27 @@ async function generateDatasetWithClaude(apiKey,description,opts){
   if(!text) throw new Error("Claude returned an empty response — try again.");
   const obj=extractJsonObject(text);
   if(!obj) throw new Error("Couldn't parse Claude's response — try again.");
-  const rows=(obj.rows||[])
-    .map(r=>({label:String(r&&r.label!=null?r.label:"").trim(),value:Number(r&&r.value)}))
-    .filter(r=>r.label&&!isNaN(r.value));
+  // Accept both the multi-series shape (series + rows.values) and the legacy
+  // single-value shape (y_label + rows.value).
+  let seriesNames=Array.isArray(obj.series)&&obj.series.length?obj.series.map(s=>String(s).trim()||"Value"):(obj.y_label?[String(obj.y_label).trim()]:["Value"]);
+  const rows=(obj.rows||[]).map(r=>{
+    const label=String(r&&r.label!=null?r.label:"").trim();
+    let vals=Array.isArray(r&&r.values)?r.values.map(v=>Number(v)):(r&&r.value!=null?[Number(r.value)]:[]);
+    return {label,values:vals};
+  }).filter(r=>r.label&&r.values.length&&!isNaN(r.values[0]));
   if(!rows.length) throw new Error("Claude returned no usable data rows — try rephrasing.");
+  // Align column count to the widest row so series names and values stay in sync.
+  const ncol=Math.max(seriesNames.length,...rows.map(r=>r.values.length));
+  seriesNames=Array.from({length:ncol},(_,k)=>seriesNames[k]||("Series "+(k+1)));
+  rows.forEach(r=>{r.values=Array.from({length:ncol},(_,k)=>{const n=Number(r.values[k]);return isNaN(n)?0:n;});});
   const types=["Bar","Line","Pie","Donut"];
   const src=obj.source&&obj.source.name?{name:String(obj.source.name).trim(),url:obj.source.url?String(obj.source.url).trim():""}:null;
   return {
     title:(obj.title||description).trim(),
     xLabel:(obj.x_label||"").trim(),
-    yLabel:(obj.y_label||"").trim(),
-    chartType:types.includes(obj.chart_type)?obj.chart_type:"Bar",
+    yLabel:seriesNames.length===1?seriesNames[0]:"",
+    series:seriesNames,
+    chartType:types.includes(obj.chart_type)?obj.chart_type:(seriesNames.length>1?"Line":"Bar"),
     source:src,
     rows,
   };
@@ -646,33 +733,30 @@ function DataVizStudio11(){
     setGenError(""); setGenerating(true);
     try{
       const res=await generateDatasetWithClaude(k,promptText.trim(),{model:genModel,webSearch:genWeb});
-      const data=res.rows;
-      const csvLines=["Label,Value",...data.map(d=>`${d.label},${d.value}`)].join("\n");
-      setCsvText(csvLines);
       const notes=genWeb?(res.source?`Generated by Claude with web search — sourced from ${res.source.name}. Verify before presenting.`:"Generated by Claude with web search — verify the numbers before presenting."):"Generated by Claude from model knowledge — verify the numbers before presenting.";
-      setPending({title:res.title,data,source:res.source||null,chartType:res.chartType,notes,csvExport:csvLines,xLabel:res.xLabel,yLabel:res.yLabel});
-      setValidationIssues(validateData(data)); setSavedCSV(false); setStage(STAGE_REVIEW);
+      goReview(res.title,res.series,res.rows,res.source||null,res.chartType,notes,res.xLabel,res.yLabel);
     }catch(e){ setGenError(e.message||"Generation failed."); }
     finally{ setGenerating(false); }
   };
 
-  const goReview=(title,data,source,suggestedType,notes="")=>{
-    const issues=validateData(data);
-    const csvLines=["Label,Value",...data.map(d=>`${d.label},${d.value}`)].join("\n");
-    setPending({title,data,source,chartType:suggestedType||"Bar",notes,csvExport:csvLines});
-    setValidationIssues(issues); setSavedCSV(false); setStage(STAGE_REVIEW);
+  const goReview=(title,seriesNames,rows,source,suggestedType,notes="",xLabel="",yLabel="")=>{
+    const ds=buildDataset(seriesNames,rows);
+    const csvLines=rowsToCSV(ds.series,ds.rows);
+    setCsvText(csvLines);
+    setPending({title,series:ds.series,data:ds.rows,source,chartType:suggestedType||"Bar",notes,csvExport:csvLines,xLabel,yLabel});
+    setValidationIssues(validateData(ds.rows)); setSavedCSV(false); setStage(STAGE_REVIEW);
   };
 
   const handleQuick=(key)=>{
     const ds=DATASETS[key];
-    goReview(ds.title,ds.data,ds.source,ds.type,"Pre-loaded verified dataset.");
+    goReview(ds.title,["Value"],ds.data.map(d=>({label:d.label,values:[d.value]})),ds.source,ds.type,"Pre-loaded verified dataset.");
   };
 
   const handleCSV=()=>{
     const parsed=parseCSV(csvText);
-    if(!parsed?.length){setCsvError("Could not parse. Make sure first row is: Label,Value");return;}
+    if(!parsed){setCsvError("Could not parse. First row must be a header like: Label,Value");return;}
     setCsvError("");
-    goReview("Custom Data",parsed,null,"Bar","");
+    goReview("Custom Data",parsed.seriesNames,parsed.rows,null,isMulti(parsed.seriesNames)?"Line":"Bar","");
   };
 
   const buildClaudePrompt=()=>{
@@ -686,19 +770,20 @@ function DataVizStudio11(){
     });
   };
 
-  // Live-edit the staged data (Review stage): coerce nothing yet, just re-derive the
+  // Live-edit the staged data (Review stage): keep typed strings, just re-derive the
   // CSV preview and validation so the user sees feedback as they type.
-  const setPendingData=(rows)=>{
-    const csvLines=["Label,Value",...rows.map(d=>`${d.label},${d.value}`)].join("\n");
-    const numified=rows.map(r=>({label:String(r.label).trim(),value:Number(r.value)}));
-    setPending(p=>p?{...p,data:rows,csvExport:csvLines}:p);
+  const setPendingData=(seriesNames,rows)=>{
+    const csvLines=rowsToCSV(seriesNames,rows);
+    const numified=rows.map(r=>({label:String(r.label).trim(),values:valsOf(r).map(v=>Number(v))}));
+    setPending(p=>p?{...p,series:seriesNames,data:rows,csvExport:csvLines}:p);
     setValidationIssues(validateData(numified));
   };
 
   const handleApprove=()=>{
-    const data=pending.data.map(r=>({label:String(r.label).trim(),value:Number(r.value)})).filter(r=>r.label&&!isNaN(r.value));
+    const ds=buildDataset(pending.series,pending.data);
+    const data=ds.rows.filter(r=>r.label&&r.values.length&&!isNaN(r.values[0]));
     if(!data.length){alert("Add at least one row with a label and a number before graphing.");return;}
-    const approved={...pending,data,csvExport:["Label,Value",...data.map(d=>`${d.label},${d.value}`)].join("\n")};
+    const approved={...pending,series:ds.series,data,csvExport:rowsToCSV(ds.series,data)};
     setChartData(approved); setChartType(approved.chartType);
     setEditTitle(approved.title||""); setAxisX(approved.xLabel||""); setAxisY(approved.yLabel||"");
     setIncZero(false); setGridTicks(5); setValueMode("auto");
@@ -709,14 +794,16 @@ function DataVizStudio11(){
     setAnimKey(k=>k+1); setStage(STAGE_CHART);
   };
 
+  const chartSeries=chartData?chartData.series:null;
   const chartOpts={xLabel:axisX,yLabel:axisY,includeZero:incZero,maxTicks:gridTicks,valueLabels:valueMode,
-    theme,colors:PALETTES[palette]||COLORS,smooth,vGrid,yMin,yMax,pieLabels,pieName,speed,easing};
+    theme,colors:PALETTES[palette]||COLORS,smooth,vGrid,yMin,yMax,pieLabels,pieName,speed,easing,series:chartSeries};
   const exportFmt=()=>({title:editTitle,xLabel:axisX,yLabel:axisY,includeZero:incZero,maxTicks:gridTicks,
     valueLabels:valueMode,theme,palette,smooth,vGrid,yMin,yMax,maxSlices,showLegend,pieLabels,pieName,aspect,
-    speed,easing,loop:gifLoop,hold:gifHold});
+    speed,easing,loop:gifLoop,hold:gifHold,series:chartSeries});
   const fileBase=()=>((editTitle||(chartData&&chartData.title)||"chart").replace(/[^a-z0-9]/gi,"_").toLowerCase());
 
   const isPieType=chartType==="Pie"||chartType==="Donut";
+  const isMultiSeries=!!(chartData&&isMulti(chartData.series)&&(chartType==="Line"||chartType==="Bar"));
   // Data actually drawn: pie/donut get top-N slices (rest → "Other"); others pass through
   // unchanged so the Bar/Line animation effect keeps a stable array reference.
   const displayData=useMemo(()=>{
@@ -927,7 +1014,7 @@ function DataVizStudio11(){
                     placeholder={"Label,Value\n1928,3.09\n1933,3.31\n1938,2.56\n..."}
                     style={{width:"100%",minHeight:130,background:"#070710",border:"1px solid #26A17B44",borderRadius:6,color:"#e0e0e0",padding:"9px 11px",fontSize:14,fontFamily:"monospace",resize:"none",boxSizing:"border-box",outline:"none",WebkitUserSelect:"text",userSelect:"text",touchAction:"manipulation",position:"relative",zIndex:10}}/>
                   <div style={{display:"flex",gap:8,marginTop:10,flexWrap:"wrap",alignItems:"center"}}>
-                    <button onClick={()=>{setCsvError("");const parsed=parseCSV(csvText);if(!parsed?.length){setCsvError("Doesn't look like CSV — must start with Label,Value header");return;}const csvLines=["Label,Value",...parsed.map(d=>`${d.label},${d.value}`)].join("\n");setPending({title:promptText||"Custom Data",data:parsed,source:null,chartType:"Line",notes:"",csvExport:csvLines});setValidationIssues(validateData(parsed));setSavedCSV(false);setStage(STAGE_REVIEW);}}
+                    <button onClick={()=>{setCsvError("");const parsed=parseCSV(csvText);if(!parsed){setCsvError("Doesn't look like CSV — must start with a header row like Label,Value");return;}goReview(promptText||"Custom Data",parsed.seriesNames,parsed.rows,null,isMulti(parsed.seriesNames)?"Line":"Bar","");}}
                       style={{flex:1,padding:"11px 16px",borderRadius:6,background:"linear-gradient(135deg,#627EEA,#26A17B)",color:"#fff",border:"none",cursor:"pointer",fontSize:13,fontFamily:"monospace",fontWeight:700}}>
                       → Review & Graph
                     </button>
@@ -966,7 +1053,7 @@ function DataVizStudio11(){
             {pending.notes&&<div style={{marginBottom:10,padding:"8px 12px",background:"#0d1220",border:"1px solid #627EEA33",borderRadius:6,fontSize:11,color:"#627EEA"}}>{pending.notes}</div>}
 
             <div style={{fontSize:9,color:"#444",letterSpacing:1,marginBottom:5}}>EDIT DATA <span style={{color:"#2a2a3e"}}>(fix values, add / delete / reorder rows)</span></div>
-            <EditableDataTable rows={pending.data} onChange={setPendingData}/>
+            <EditableDataTable series={pending.series} rows={pending.data} onChange={setPendingData}/>
 
             {/* CSV preview */}
             <div style={{marginTop:12}}>
@@ -1155,7 +1242,9 @@ function DataVizStudio11(){
               <div style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:15,color:"#fff",marginBottom:3}}>{editTitle||chartData.title}</div>
               <div style={{fontSize:9,color:"#333",marginBottom:16,letterSpacing:1}}>{chartType.toUpperCase()} · {chartData.data.length} ITEMS</div>
               <div style={{display:"flex",justifyContent:"center"}}>{renderChart(displayData)}</div>
-              {(isPieType||(chartType==="Bar"&&showLegend))&&displayData.length<=40&&<Legend data={displayData} colors={PALETTES[palette]||COLORS}/>}
+              {isMultiSeries
+                ? <Legend data={chartData.series.map(n=>({label:n}))} colors={PALETTES[palette]||COLORS}/>
+                : (isPieType||(chartType==="Bar"&&showLegend))&&displayData.length<=40&&<Legend data={displayData} colors={PALETTES[palette]||COLORS}/>}
               <div style={{display:"flex",gap:8,justifyContent:"center",marginTop:12,flexWrap:"wrap"}}>
                 <button onClick={()=>setAnimKey(k=>k+1)} style={{padding:"6px 14px",background:"transparent",border:"1px solid #2c3446",color:"#555",borderRadius:6,cursor:"pointer",fontSize:10,fontFamily:"monospace"}}>↺ Replay</button>
                 <button onClick={handleSaveCSV} style={{padding:"6px 14px",background:"transparent",border:`1px solid ${savedCSV?"#26A17B":"#2a2a3e"}`,color:savedCSV?"#26A17B":"#666",borderRadius:6,cursor:"pointer",fontSize:10,fontFamily:"monospace"}}>{savedCSV?"✓ CSV Saved":"⬇ Save CSV"}</button>
