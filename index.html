@@ -133,6 +133,12 @@ function rowsToCSV(seriesNames,rows){
   const lines=(rows||[]).map(r=>{const v=r.values&&r.values.length?r.values:[r.value];return [r.label,...names.map((_,k)=>v[k]!=null?v[k]:"")].join(",");});
   return [header,...lines].join("\n");
 }
+// Sort rows by their first series value (for bar charts). "desc" | "asc" | anything else = keep order.
+function sortRows(rows,mode){
+  if(mode!=="desc"&&mode!=="asc"||!rows) return rows;
+  const f=r=>Number(valsOf(r)[0])||0;
+  return [...rows].sort((a,b)=>mode==="desc"?f(b)-f(a):f(a)-f(b));
+}
 
 // Axis range/ticks honoring include-zero and manual min/max overrides.
 function buildAxis(dataMin,dataMax,opts){
@@ -195,46 +201,66 @@ function drawBar(ctx,W,H,data,pv,bg,opts){
   opts=opts||{};
   const th=themeOf(opts), colors=paletteOf(opts);
   const multi=isMulti(opts.series), sc=multi?opts.series.length:1;
+  const horiz=opts.orient==="horizontal";
+  const bySign=opts.barColor==="sign"&&!multi;       // green positive / red negative
+  const POS="#26A17B", NEG="#E84142";
   const xLab=opts.xLabel&&opts.xLabel.trim(), yLab=opts.yLabel&&opts.yLabel.trim();
-  const dataMax=Math.max(...data.map(d=>Math.max(...valsOf(d).map(v=>Math.abs(Number(v)||0)))))||1;
-  const {niceMin,niceMax,step,ticks}=buildAxis(0,dataMax,opts), denom=(niceMax-niceMin)||1;
-  const padT=14, padB=34+(xLab?16:0), padL=42+(yLab?14:0), padR=14;
-  const plotW=W-padL-padR, plotH=H-padT-padB, gap=plotW/data.length, bw=gap*0.6;
+  // Span the real value range incl. negatives, always keeping 0 on the axis (diverging).
+  let dmin=0,dmax=0;
+  data.forEach(d=>valsOf(d).forEach(v=>{const n=Number(v)||0;if(n<dmin)dmin=n;if(n>dmax)dmax=n;}));
+  const {niceMin,niceMax,step,ticks}=buildAxis(dmin,dmax,{includeZero:true,maxTicks:opts.maxTicks,yMin:opts.yMin,yMax:opts.yMax}), denom=(niceMax-niceMin)||1;
   if(bg){ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);}else ctx.clearRect(0,0,W,H);
-  // gridlines + nice y-axis ticks
-  ctx.textBaseline="middle";
-  ticks.forEach(v=>{
-    const y=padT+(1-(v-niceMin)/denom)*plotH;
-    ctx.strokeStyle=th.grid;ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(padL,y);ctx.lineTo(W-padR,y);ctx.stroke();
-    ctx.font="8px monospace";ctx.fillStyle=th.tick;ctx.textAlign="right";ctx.fillText(axisTickLabel(v,step),padL-5,y);
-  });
-  ctx.textBaseline="alphabetic";
-  const lstep=labelStep(data.length,10);   // thin x labels
-  const baseY=H-padB;
-  const xlabel=(item,cx)=>{ctx.font="9px monospace";ctx.fillStyle=th.axisLabel;ctx.textAlign="center";ctx.fillText(item.label.length>9?item.label.slice(0,8)+"…":item.label,cx,baseY+12);};
-  if(multi){
-    // Grouped bars: one cluster per category, one bar per series (colored by series).
-    const clusterW=gap*0.82, sbw=clusterW/sc;
+  const colorAt=(v,s,i)=>bySign?((Number(v)||0)<0?NEG:POS):(multi?colors[s%colors.length]:colors[i%colors.length]);
+  const trunc=(s,n)=>{s=String(s==null?"":s);return s.length>n?s.slice(0,n-1)+"…":s;};
+  if(horiz){
+    const padT=12, padB=26+(xLab?16:0), padR=16;
+    const maxLabel=Math.max(0,...data.map(d=>String(d.label||"").length));
+    const padL=Math.max(56,Math.min(150,18+maxLabel*6));
+    const plotW=W-padL-padR, plotH=H-padT-padB;
+    const vAt=v=>padL+((Number(v)||0)-niceMin)/denom*plotW, x0=vAt(0);
+    ctx.textBaseline="alphabetic";ctx.textAlign="center";
+    ticks.forEach(v=>{const x=vAt(v);ctx.strokeStyle=th.grid;ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(x,padT);ctx.lineTo(x,padT+plotH);ctx.stroke();ctx.font="8px monospace";ctx.fillStyle=th.tick;ctx.fillText(axisTickLabel(v,step),x,padT+plotH+12);});
+    const gap=plotH/data.length, lstep=labelStep(data.length,20);
+    const showValues=!multi&&(opts.valueLabels==="on"?true:opts.valueLabels==="off"?false:data.length<=16);
     data.forEach((item,i)=>{
-      const vals=valsOf(item), cx0=padL+i*gap+(gap-clusterW)/2;
-      vals.forEach((vv,s)=>{
-        const v=Math.abs(Number(vv)||0), bh=Math.max(0,(v-niceMin)/denom)*plotH*pv, x=cx0+s*sbw, y=baseY-bh;
-        const c=colors[s%colors.length], g=ctx.createLinearGradient(0,y,0,baseY);g.addColorStop(0,c);g.addColorStop(1,c+"33");
-        ctx.fillStyle=g;ctx.beginPath();ctx.roundRect(x,y,Math.max(1,sbw-1.5),bh,[3,3,0,0]);ctx.fill();
-      });
-      if(i%lstep===0||i===data.length-1) xlabel(item,padL+i*gap+gap/2);
+      const vals=valsOf(item), band=padT+i*gap;
+      if(multi){
+        const clusterH=gap*0.82, sbh=clusterH/sc, y0c=band+(gap-clusterH)/2;
+        vals.forEach((vv,s)=>{const xe=vAt((Number(vv)||0)*pv),x=Math.min(x0,xe),w=Math.abs(xe-x0),y=y0c+s*sbh;ctx.fillStyle=colorAt(vv,s,i);ctx.beginPath();ctx.roundRect(x,y,Math.max(0,w),Math.max(1,sbh-1.5),3);ctx.fill();});
+      }else{
+        const v=Number(item.value)||0, bh=gap*0.62, y=band+(gap-bh)/2, xe=vAt(v*pv), x=Math.min(x0,xe), w=Math.abs(xe-x0);
+        const c=colorAt(v,0,i), g=ctx.createLinearGradient(x0,0,xe,0);g.addColorStop(0,c);g.addColorStop(1,c+"55");
+        ctx.fillStyle=g;ctx.beginPath();ctx.roundRect(x,y,Math.max(0,w),bh,v<0?[4,0,0,4]:[0,4,4,0]);ctx.fill();
+        if(showValues&&pv>0.85){ctx.globalAlpha=Math.min(1,(pv-0.85)/0.15);ctx.font="bold 9px monospace";ctx.fillStyle=th.value;ctx.textBaseline="middle";ctx.textAlign=v<0?"right":"left";ctx.fillText(fmtNum(v),xe+(v<0?-4:4),y+bh/2);ctx.globalAlpha=1;ctx.textBaseline="alphabetic";}
+      }
+      if(i%lstep===0||i===data.length-1){ctx.font="9px monospace";ctx.fillStyle=th.axisLabel;ctx.textAlign="right";ctx.textBaseline="middle";ctx.fillText(trunc(item.label,Math.floor(padL/6)),padL-6,band+gap/2);ctx.textBaseline="alphabetic";}
     });
-  } else {
-    const showValues=opts.valueLabels==="on"?true:opts.valueLabels==="off"?false:data.length<=12;
-    data.forEach((item,i)=>{
-      const bh=Math.max(0,(Math.abs(item.value)-niceMin)/denom)*plotH*pv,x=padL+i*gap+(gap-bw)/2,y=baseY-bh;
-      const c=colors[i%colors.length], g=ctx.createLinearGradient(0,y,0,baseY);g.addColorStop(0,c);g.addColorStop(1,c+"33");
-      ctx.fillStyle=g;ctx.beginPath();ctx.roundRect(x,y,bw,bh,[4,4,0,0]);ctx.fill();
-      if(i%lstep===0||i===data.length-1) xlabel(item,x+bw/2);
-      if(showValues&&pv>0.85){ctx.globalAlpha=Math.min(1,(pv-0.85)/0.15);ctx.font="bold 10px monospace";ctx.fillStyle=th.value;ctx.textAlign="center";ctx.fillText(fmtNum(item.value),x+bw/2,y-5);ctx.globalAlpha=1;}
-    });
+    drawAxisTitles(ctx,padL,plotW,padT,plotH,H,xLab,"",th.axisTitle);
+  }else{
+    const padT=14, padB=34+(xLab?16:0), padL=42+(yLab?14:0), padR=14;
+    const plotW=W-padL-padR, plotH=H-padT-padB, gap=plotW/data.length;
+    const vAt=v=>padT+(1-((Number(v)||0)-niceMin)/denom)*plotH, y0=vAt(0), baseY=padT+plotH;
+    ctx.textBaseline="middle";
+    ticks.forEach(v=>{const y=vAt(v);ctx.strokeStyle=th.grid;ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(padL,y);ctx.lineTo(W-padR,y);ctx.stroke();ctx.font="8px monospace";ctx.fillStyle=th.tick;ctx.textAlign="right";ctx.fillText(axisTickLabel(v,step),padL-5,y);});
+    ctx.textBaseline="alphabetic";
+    const lstep=labelStep(data.length,10);
+    const showValues=!multi&&(opts.valueLabels==="on"?true:opts.valueLabels==="off"?false:data.length<=12);
+    const xlabel=(item,cx)=>{ctx.font="9px monospace";ctx.fillStyle=th.axisLabel;ctx.textAlign="center";ctx.fillText(trunc(item.label,9),cx,baseY+12);};
+    if(multi){
+      const clusterW=gap*0.82, sbw=clusterW/sc;
+      data.forEach((item,i)=>{const vals=valsOf(item),cx0=padL+i*gap+(gap-clusterW)/2;
+        vals.forEach((vv,s)=>{const ye=vAt((Number(vv)||0)*pv),y=Math.min(y0,ye),h=Math.abs(ye-y0),x=cx0+s*sbw;ctx.fillStyle=colorAt(vv,s,i);ctx.beginPath();ctx.roundRect(x,y,Math.max(1,sbw-1.5),Math.max(0,h),3);ctx.fill();});
+        if(i%lstep===0||i===data.length-1)xlabel(item,padL+i*gap+gap/2);});
+    }else{
+      const bw=gap*0.6;
+      data.forEach((item,i)=>{const v=Number(item.value)||0,x=padL+i*gap+(gap-bw)/2,ye=vAt(v*pv),y=Math.min(y0,ye),h=Math.abs(ye-y0);
+        const c=colorAt(v,0,i),g=ctx.createLinearGradient(0,y0,0,ye);g.addColorStop(0,c);g.addColorStop(1,c+"55");
+        ctx.fillStyle=g;ctx.beginPath();ctx.roundRect(x,y,bw,Math.max(0,h),v<0?[0,0,4,4]:[4,4,0,0]);ctx.fill();
+        if(i%lstep===0||i===data.length-1)xlabel(item,x+bw/2);
+        if(showValues&&pv>0.85){ctx.globalAlpha=Math.min(1,(pv-0.85)/0.15);ctx.font="bold 10px monospace";ctx.fillStyle=th.value;ctx.textAlign="center";ctx.textBaseline=v<0?"top":"alphabetic";ctx.fillText(fmtNum(v),x+bw/2,ye+(v<0?4:-5));ctx.globalAlpha=1;ctx.textBaseline="alphabetic";}});
+    }
+    drawAxisTitles(ctx,padL,plotW,padT,plotH,H,xLab,yLab,th.axisTitle);
   }
-  drawAxisTitles(ctx,padL,plotW,padT,plotH,H,xLab,yLab,th.axisTitle);
 }
 
 // Catmull-Rom → cubic bezier through pts (current point already at pts[0]).
@@ -380,9 +406,9 @@ function chartLayout(chartData,chartType,fmt){
   const title=(fmt.title!=null?fmt.title:chartData.title)||"Chart";
   const isPie=chartType==="Pie"||chartType==="Donut";
   const multi=isMulti(fmt.series)&&(chartType==="Line"||chartType==="Bar");
-  const plotData=isPie?limitSlices(chartData.data,fmt.maxSlices):chartData.data;
+  const plotData=isPie?limitSlices(chartData.data,fmt.maxSlices):(chartType==="Bar"?sortRows(chartData.data,fmt.barSort):chartData.data);
   const axisOpts={xLabel:fmt.xLabel,yLabel:fmt.yLabel,includeZero:fmt.includeZero,maxTicks:fmt.maxTicks,
-    valueLabels:fmt.valueLabels,smooth:fmt.smooth,vGrid:fmt.vGrid,yMin:fmt.yMin,yMax:fmt.yMax,theme:fmt.theme,colors,pieLabels:fmt.pieLabels,pieName:fmt.pieName,series:fmt.series};
+    valueLabels:fmt.valueLabels,smooth:fmt.smooth,vGrid:fmt.vGrid,yMin:fmt.yMin,yMax:fmt.yMax,theme:fmt.theme,colors,pieLabels:fmt.pieLabels,pieName:fmt.pieName,series:fmt.series,orient:fmt.orient,barColor:fmt.barColor};
   const cd=chartDims(chartType,fmt.aspect), titleH=46;
   // Multi-series → legend of series names; pie/donut → legend of category names.
   const legend=multi?fmt.series.map(n=>({label:n})):((isPie&&plotData.length<=40)?plotData:null);
@@ -692,6 +718,9 @@ function DataVizStudio11(){
   const [palette,setPalette]=useState("Default");
   const [smooth,setSmooth]=useState(false);
   const [vGrid,setVGrid]=useState(false);              // vertical gridlines (line chart)
+  const [orient,setOrient]=useState("vertical");       // bar orientation: vertical | horizontal
+  const [barColor,setBarColor]=useState("palette");    // bar coloring: palette | sign
+  const [barSort,setBarSort]=useState("none");         // bar sort: none | desc | asc
   const [yMin,setYMin]=useState("");
   const [yMax,setYMax]=useState("");
   const [maxSlices,setMaxSlices]=useState(0);          // 0 = show all slices (pie/donut)
@@ -788,6 +817,7 @@ function DataVizStudio11(){
     setEditTitle(approved.title||""); setAxisX(approved.xLabel||""); setAxisY(approved.yLabel||"");
     setIncZero(false); setGridTicks(5); setValueMode("auto");
     setTheme("dark"); setPalette("Default"); setSmooth(false); setVGrid(false); setYMin(""); setYMax("");
+    setOrient("vertical"); setBarColor("palette"); setBarSort("none");
     setMaxSlices(0); setShowLegend(true); setPieLabels("percent"); setPieName(false);
     setAspect("Auto"); setScale(3); setCopyState("");
     setSpeed(1); setEasing("Ease out"); setGifLoop(true); setGifHold(2000);
@@ -796,10 +826,10 @@ function DataVizStudio11(){
 
   const chartSeries=chartData?chartData.series:null;
   const chartOpts={xLabel:axisX,yLabel:axisY,includeZero:incZero,maxTicks:gridTicks,valueLabels:valueMode,
-    theme,colors:PALETTES[palette]||COLORS,smooth,vGrid,yMin,yMax,pieLabels,pieName,speed,easing,series:chartSeries};
+    theme,colors:PALETTES[palette]||COLORS,smooth,vGrid,yMin,yMax,pieLabels,pieName,speed,easing,series:chartSeries,orient,barColor};
   const exportFmt=()=>({title:editTitle,xLabel:axisX,yLabel:axisY,includeZero:incZero,maxTicks:gridTicks,
     valueLabels:valueMode,theme,palette,smooth,vGrid,yMin,yMax,maxSlices,showLegend,pieLabels,pieName,aspect,
-    speed,easing,loop:gifLoop,hold:gifHold,series:chartSeries});
+    speed,easing,loop:gifLoop,hold:gifHold,series:chartSeries,orient,barColor,barSort});
   const fileBase=()=>((editTitle||(chartData&&chartData.title)||"chart").replace(/[^a-z0-9]/gi,"_").toLowerCase());
 
   const isPieType=chartType==="Pie"||chartType==="Donut";
@@ -808,8 +838,10 @@ function DataVizStudio11(){
   // unchanged so the Bar/Line animation effect keeps a stable array reference.
   const displayData=useMemo(()=>{
     const d=chartData?chartData.data:[];
-    return isPieType?limitSlices(d,maxSlices):d;
-  },[chartData,isPieType,maxSlices]);
+    if(isPieType) return limitSlices(d,maxSlices);
+    if(chartType==="Bar") return sortRows(d,barSort);
+    return d;
+  },[chartData,isPieType,chartType,maxSlices,barSort]);
   const dims=chartDims(chartType,aspect);   // live-preview canvas size (matches export)
   const exportLayout=chartData?chartLayout(chartData,chartType,exportFmt()):null;   // for the export-size hint
 
@@ -1114,6 +1146,27 @@ function DataVizStudio11(){
               {(chartType==="Bar"||chartType==="Line")&&<SectionLabel>SCALE &amp; VALUES</SectionLabel>}
               {(chartType==="Bar"||chartType==="Line")&&(
                 <div style={{display:"flex",gap:16,flexWrap:"wrap",alignItems:"center",marginTop:6}}>
+                  {chartType==="Bar"&&<label style={{display:"flex",alignItems:"center",gap:6}}>
+                    <span style={{fontSize:8,color:"#555",letterSpacing:1,fontWeight:700}}>ORIENT</span>
+                    <select value={orient} onChange={e=>{setOrient(e.target.value);setAnimKey(k=>k+1);}}
+                      style={{background:"#070710",border:"1px solid #2a2a3e",borderRadius:6,color:"#e0e0e0",padding:"5px 7px",fontSize:12,fontFamily:"monospace",outline:"none"}}>
+                      <option value="vertical">Vertical</option><option value="horizontal">Horizontal</option>
+                    </select>
+                  </label>}
+                  {chartType==="Bar"&&!isMultiSeries&&<label style={{display:"flex",alignItems:"center",gap:6}}>
+                    <span style={{fontSize:8,color:"#555",letterSpacing:1,fontWeight:700}}>COLOR&nbsp;BY</span>
+                    <select value={barColor} onChange={e=>setBarColor(e.target.value)}
+                      style={{background:"#070710",border:"1px solid #2a2a3e",borderRadius:6,color:"#e0e0e0",padding:"5px 7px",fontSize:12,fontFamily:"monospace",outline:"none"}}>
+                      <option value="palette">Palette</option><option value="sign">+ / − (green/red)</option>
+                    </select>
+                  </label>}
+                  {chartType==="Bar"&&<label style={{display:"flex",alignItems:"center",gap:6}}>
+                    <span style={{fontSize:8,color:"#555",letterSpacing:1,fontWeight:700}}>SORT</span>
+                    <select value={barSort} onChange={e=>{setBarSort(e.target.value);setAnimKey(k=>k+1);}}
+                      style={{background:"#070710",border:"1px solid #2a2a3e",borderRadius:6,color:"#e0e0e0",padding:"5px 7px",fontSize:12,fontFamily:"monospace",outline:"none"}}>
+                      <option value="none">Original</option><option value="desc">High → Low</option><option value="asc">Low → High</option>
+                    </select>
+                  </label>}
                   <label style={{display:"flex",alignItems:"center",gap:6}}>
                     <span style={{fontSize:8,color:"#555",letterSpacing:1,fontWeight:700}}>GRIDLINES</span>
                     <select value={gridTicks} onChange={e=>setGridTicks(Number(e.target.value))}
