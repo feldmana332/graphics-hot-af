@@ -96,6 +96,9 @@ const PALETTES={
 };
 const THEME_DARK ={bg:"#212838",grid:"#2c3446",tick:"#666",axisLabel:"#888",axisTitle:"#aaa",title:"#fff",value:"#fff",pct:"#fff",legend:"#bbb",source:"#666"};
 const THEME_LIGHT={bg:"#ffffff",grid:"#e5e5ea",tick:"#888",axisLabel:"#555",axisTitle:"#444",title:"#111",value:"#222",pct:"#fff",legend:"#333",source:"#888"};
+// Font families for the title / axis-label styling controls (valid for both CSS and canvas).
+const FONTS={Display:"'Syne',sans-serif",Sans:"system-ui,sans-serif",Serif:"Georgia,serif",Mono:"monospace",Script:"'Dancing Script',cursive"};
+function fontFamily(key){return FONTS[key]||"monospace";}
 function themeOf(opts){return opts&&opts.theme==="light"?THEME_LIGHT:THEME_DARK;}
 function paletteOf(opts){return (opts&&opts.colors)||COLORS;}
 
@@ -157,12 +160,17 @@ function buildAxis(dataMin,dataMax,opts){
   return {niceMin:min,niceMax:max,step,ticks};
 }
 
-// Draw optional rotated y-axis title and centered x-axis title.
-function drawAxisTitles(ctx,padL,plotW,padT,plotH,H,xLab,yLab,color){
-  ctx.fillStyle=color||"#999";ctx.font="bold 9px monospace";
+// Draw optional rotated y-axis title and centered x-axis title (styled via opts).
+function drawAxisTitles(ctx,padL,plotW,padT,plotH,H,xLab,yLab,opts){
+  opts=opts||{};
+  const th=themeOf(opts);
+  const color=opts.axisColor||th.axisTitle, size=opts.axisSize||9, fam=fontFamily(opts.axisFont);
+  ctx.fillStyle=color;ctx.font=`bold ${size}px ${fam}`;
   if(xLab){ctx.textAlign="center";ctx.textBaseline="alphabetic";ctx.fillText(xLab,padL+plotW/2,H-3);}
-  if(yLab){ctx.save();ctx.translate(11,padT+plotH/2);ctx.rotate(-Math.PI/2);ctx.textAlign="center";ctx.textBaseline="middle";ctx.fillText(yLab,0,0);ctx.restore();}
+  if(yLab){ctx.save();ctx.translate(size+3,padT+plotH/2);ctx.rotate(-Math.PI/2);ctx.textAlign="center";ctx.textBaseline="middle";ctx.fillText(yLab,0,0);ctx.restore();}
 }
+// Space to reserve for an axis title given its font size.
+function axisReserve(opts){return (opts&&opts.axisSize||9)+8;}
 
 function drawPie(ctx,W,H,data,pv,donut,bg,opts){
   const th=themeOf(opts), colors=paletteOf(opts), sep=bg||th.bg;
@@ -213,7 +221,7 @@ function drawBar(ctx,W,H,data,pv,bg,opts){
   const colorAt=(v,s,i)=>bySign?((Number(v)||0)<0?NEG:POS):(multi?colors[s%colors.length]:colors[i%colors.length]);
   const trunc=(s,n)=>{s=String(s==null?"":s);return s.length>n?s.slice(0,n-1)+"…":s;};
   if(horiz){
-    const padT=12, padB=26+(xLab?16:0), padR=16;
+    const padT=12, padB=26+(xLab?axisReserve(opts):0), padR=16;
     const maxLabel=Math.max(0,...data.map(d=>String(d.label||"").length));
     const padL=Math.max(56,Math.min(150,18+maxLabel*6));
     const plotW=W-padL-padR, plotH=H-padT-padB;
@@ -235,9 +243,9 @@ function drawBar(ctx,W,H,data,pv,bg,opts){
       }
       if(i%lstep===0||i===data.length-1){ctx.font="9px monospace";ctx.fillStyle=th.axisLabel;ctx.textAlign="right";ctx.textBaseline="middle";ctx.fillText(trunc(item.label,Math.floor(padL/6)),padL-6,band+gap/2);ctx.textBaseline="alphabetic";}
     });
-    drawAxisTitles(ctx,padL,plotW,padT,plotH,H,xLab,"",th.axisTitle);
+    drawAxisTitles(ctx,padL,plotW,padT,plotH,H,xLab,"",opts);
   }else{
-    const padT=14, padB=34+(xLab?16:0), padL=42+(yLab?14:0), padR=14;
+    const padT=14, padB=34+(xLab?axisReserve(opts):0), padL=42+(yLab?axisReserve(opts):0), padR=14;
     const plotW=W-padL-padR, plotH=H-padT-padB, gap=plotW/data.length;
     const vAt=v=>padT+(1-((Number(v)||0)-niceMin)/denom)*plotH, y0=vAt(0), baseY=padT+plotH;
     ctx.textBaseline="middle";
@@ -259,7 +267,7 @@ function drawBar(ctx,W,H,data,pv,bg,opts){
         if(i%lstep===0||i===data.length-1)xlabel(item,x+bw/2);
         if(showValues&&pv>0.85){ctx.globalAlpha=Math.min(1,(pv-0.85)/0.15);ctx.font="bold 10px monospace";ctx.fillStyle=th.value;ctx.textAlign="center";ctx.textBaseline=v<0?"top":"alphabetic";ctx.fillText(fmtNum(v),x+bw/2,ye+(v<0?4:-5));ctx.globalAlpha=1;ctx.textBaseline="alphabetic";}});
     }
-    drawAxisTitles(ctx,padL,plotW,padT,plotH,H,xLab,yLab,th.axisTitle);
+    drawAxisTitles(ctx,padL,plotW,padT,plotH,H,xLab,yLab,opts);
   }
 }
 
@@ -279,7 +287,7 @@ function drawLine(ctx,W,H,data,pv,bg,opts){
   data.forEach(d=>valsOf(d).forEach(v=>{const n=Number(v)||0;if(n>maxV)maxV=n;if(n<minV)minV=n;}));
   if(!isFinite(maxV)){maxV=1;minV=0;}
   const {niceMin,niceMax,step,ticks}=buildAxis(minV,maxV,opts), denom=(niceMax-niceMin)||1;
-  const padT=14, padB=32+(xLab?16:0), padL=44+(yLab?14:0), padR=14;
+  const padT=14, padB=32+(xLab?axisReserve(opts):0), padL=44+(yLab?axisReserve(opts):0), padR=14;
   const plotW=W-padL-padR, plotH=H-padT-padB, baseY=H-padB;
   const xAt=i=>padL+(i/Math.max(data.length-1,1))*plotW;
   const yAt=v=>padT+(1-(Number(v||0)-niceMin)/denom)*plotH;
@@ -315,7 +323,7 @@ function drawLine(ctx,W,H,data,pv,bg,opts){
   // x-axis category labels (drawn once, thinned)
   if(vis>=2){ctx.font="8px monospace";ctx.fillStyle=th.axisLabel;ctx.textAlign="center";
     data.slice(0,vis).forEach((d,i)=>{if(i%lstep===0||i===data.length-1)ctx.fillText(d.label,xAt(i),baseY+12);});}
-  drawAxisTitles(ctx,padL,plotW,padT,plotH,H,xLab,yLab,th.axisTitle);
+  drawAxisTitles(ctx,padL,plotW,padT,plotH,H,xLab,yLab,opts);
 }
 
 const CHART_DIMS={Pie:{w:320,h:320},Donut:{w:320,h:320},Bar:{w:480,h:280},Line:{w:480,h:280}};
@@ -408,21 +416,23 @@ function chartLayout(chartData,chartType,fmt){
   const multi=isMulti(fmt.series)&&(chartType==="Line"||chartType==="Bar");
   const plotData=isPie?limitSlices(chartData.data,fmt.maxSlices):(chartType==="Bar"?sortRows(chartData.data,fmt.barSort):chartData.data);
   const axisOpts={xLabel:fmt.xLabel,yLabel:fmt.yLabel,includeZero:fmt.includeZero,maxTicks:fmt.maxTicks,
-    valueLabels:fmt.valueLabels,smooth:fmt.smooth,vGrid:fmt.vGrid,yMin:fmt.yMin,yMax:fmt.yMax,theme:fmt.theme,colors,pieLabels:fmt.pieLabels,pieName:fmt.pieName,series:fmt.series,orient:fmt.orient,barColor:fmt.barColor};
-  const cd=chartDims(chartType,fmt.aspect), titleH=46;
+    valueLabels:fmt.valueLabels,smooth:fmt.smooth,vGrid:fmt.vGrid,yMin:fmt.yMin,yMax:fmt.yMax,theme:fmt.theme,colors,pieLabels:fmt.pieLabels,pieName:fmt.pieName,series:fmt.series,orient:fmt.orient,barColor:fmt.barColor,
+    axisFont:fmt.axisFont,axisSize:fmt.axisSize,axisColor:fmt.axisColor};
+  const titleSize=fmt.titleSize||18, titleColor=fmt.titleColor||th.title, titleFam=fontFamily(fmt.titleFont);
+  const cd=chartDims(chartType,fmt.aspect), titleH=Math.round(titleSize*1.9+16);
   // Multi-series → legend of series names; pie/donut → legend of category names.
   const legend=multi?fmt.series.map(n=>({label:n})):((isPie&&plotData.length<=40)?plotData:null);
   const legendH=legend?Math.ceil(legend.length/3)*20+12:0;
   const srcText=chartData.source&&chartData.source.name?("Source: "+chartData.source.name):null;
   const sourceH=srcText?22:0;
-  return {th,colors,title,axisOpts,cd,titleH,legend,legendH,plotData,srcText,W:cd.w,H:titleH+cd.h+legendH+sourceH+10};
+  return {th,colors,title,titleSize,titleColor,titleFam,axisOpts,cd,titleH,legend,legendH,plotData,srcText,W:cd.w,H:titleH+cd.h+legendH+sourceH+10};
 }
 // Paint one full frame (bg + title + chart + legend + source) onto ctx at progress pv.
 function composeChart(ctx,L,chartData,chartType,pv){
-  const {th,colors,title,axisOpts,cd,titleH,legend,legendH,plotData,W,H,srcText}=L;
+  const {th,colors,title,titleSize,titleColor,titleFam,axisOpts,cd,titleH,legend,legendH,plotData,W,H,srcText}=L;
   ctx.fillStyle=th.bg;ctx.fillRect(0,0,W,H);
-  ctx.fillStyle=th.title;ctx.font="bold 16px monospace";ctx.textAlign="center";ctx.textBaseline="middle";
-  ctx.fillText(title.length>52?title.slice(0,51)+"…":title,W/2,titleH/2);
+  ctx.fillStyle=titleColor;ctx.font=`bold ${titleSize}px ${titleFam}`;ctx.textAlign="center";ctx.textBaseline="middle";
+  ctx.fillText(title.length>60?title.slice(0,59)+"…":title,W/2,titleH/2);
   ctx.save();ctx.translate(0,titleH);drawChart(chartType,ctx,cd.w,cd.h,plotData,pv,th.bg,axisOpts);ctx.restore();
   if(legend){
     ctx.textBaseline="middle";ctx.textAlign="left";ctx.font="11px monospace";
@@ -711,6 +721,12 @@ function DataVizStudio11(){
   const [editTitle,setEditTitle]=useState("");
   const [axisX,setAxisX]=useState("");
   const [axisY,setAxisY]=useState("");
+  const [titleFont,setTitleFont]=useState("Display");
+  const [titleSize,setTitleSize]=useState(18);
+  const [titleColor,setTitleColor]=useState("#ffffff");
+  const [axisFont,setAxisFont]=useState("Mono");
+  const [axisSize,setAxisSize]=useState(11);
+  const [axisColor,setAxisColor]=useState("#aaaaaa");
   const [incZero,setIncZero]=useState(false);
   const [gridTicks,setGridTicks]=useState(5);
   const [valueMode,setValueMode]=useState("auto");   // auto | on | off
@@ -818,6 +834,8 @@ function DataVizStudio11(){
     setIncZero(false); setGridTicks(5); setValueMode("auto");
     setTheme("dark"); setPalette("Default"); setSmooth(false); setVGrid(false); setYMin(""); setYMax("");
     setOrient("vertical"); setBarColor("palette"); setBarSort("none");
+    setTitleFont("Display"); setTitleSize(18); setTitleColor("#ffffff");
+    setAxisFont("Mono"); setAxisSize(11); setAxisColor("#aaaaaa");
     setMaxSlices(0); setShowLegend(true); setPieLabels("percent"); setPieName(false);
     setAspect("Auto"); setScale(3); setCopyState("");
     setSpeed(1); setEasing("Ease out"); setGifLoop(true); setGifHold(2000);
@@ -826,10 +844,12 @@ function DataVizStudio11(){
 
   const chartSeries=chartData?chartData.series:null;
   const chartOpts={xLabel:axisX,yLabel:axisY,includeZero:incZero,maxTicks:gridTicks,valueLabels:valueMode,
-    theme,colors:PALETTES[palette]||COLORS,smooth,vGrid,yMin,yMax,pieLabels,pieName,speed,easing,series:chartSeries,orient,barColor};
+    theme,colors:PALETTES[palette]||COLORS,smooth,vGrid,yMin,yMax,pieLabels,pieName,speed,easing,series:chartSeries,orient,barColor,
+    axisFont,axisSize,axisColor};
   const exportFmt=()=>({title:editTitle,xLabel:axisX,yLabel:axisY,includeZero:incZero,maxTicks:gridTicks,
     valueLabels:valueMode,theme,palette,smooth,vGrid,yMin,yMax,maxSlices,showLegend,pieLabels,pieName,aspect,
-    speed,easing,loop:gifLoop,hold:gifHold,series:chartSeries,orient,barColor,barSort});
+    speed,easing,loop:gifLoop,hold:gifHold,series:chartSeries,orient,barColor,barSort,
+    titleFont,titleSize,titleColor,axisFont,axisSize,axisColor});
   const fileBase=()=>((editTitle||(chartData&&chartData.title)||"chart").replace(/[^a-z0-9]/gi,"_").toLowerCase());
 
   const isPieType=chartType==="Pie"||chartType==="Donut";
@@ -1143,6 +1163,35 @@ function DataVizStudio11(){
                   </label>
                 </>}
               </div>
+              <SectionLabel>TEXT STYLE</SectionLabel>
+              <div style={{display:"flex",gap:16,flexWrap:"wrap",alignItems:"center",marginTop:6}}>
+                <span style={{fontSize:8,color:"#777",letterSpacing:1,fontWeight:700,minWidth:34}}>TITLE</span>
+                <select value={titleFont} onChange={e=>setTitleFont(e.target.value)}
+                  style={{background:"#070710",border:"1px solid #2a2a3e",borderRadius:6,color:"#e0e0e0",padding:"5px 7px",fontSize:12,fontFamily:"monospace",outline:"none"}}>
+                  {Object.keys(FONTS).map(f=><option key={f} value={f}>{f}</option>)}
+                </select>
+                <select value={titleSize} onChange={e=>setTitleSize(Number(e.target.value))}
+                  style={{background:"#070710",border:"1px solid #2a2a3e",borderRadius:6,color:"#e0e0e0",padding:"5px 7px",fontSize:12,fontFamily:"monospace",outline:"none"}}>
+                  {[14,16,18,20,24,28,32].map(n=><option key={n} value={n}>{n}px</option>)}
+                </select>
+                <input type="color" value={titleColor} onChange={e=>setTitleColor(e.target.value)} title="Title color"
+                  style={{width:34,height:26,padding:0,border:"1px solid #2a2a3e",borderRadius:6,background:"#070710",cursor:"pointer"}}/>
+              </div>
+              {(chartType==="Bar"||chartType==="Line")&&(
+                <div style={{display:"flex",gap:16,flexWrap:"wrap",alignItems:"center",marginTop:8}}>
+                  <span style={{fontSize:8,color:"#777",letterSpacing:1,fontWeight:700,minWidth:34}}>AXES</span>
+                  <select value={axisFont} onChange={e=>setAxisFont(e.target.value)}
+                    style={{background:"#070710",border:"1px solid #2a2a3e",borderRadius:6,color:"#e0e0e0",padding:"5px 7px",fontSize:12,fontFamily:"monospace",outline:"none"}}>
+                    {Object.keys(FONTS).map(f=><option key={f} value={f}>{f}</option>)}
+                  </select>
+                  <select value={axisSize} onChange={e=>setAxisSize(Number(e.target.value))}
+                    style={{background:"#070710",border:"1px solid #2a2a3e",borderRadius:6,color:"#e0e0e0",padding:"5px 7px",fontSize:12,fontFamily:"monospace",outline:"none"}}>
+                    {[8,9,10,11,12,14,16].map(n=><option key={n} value={n}>{n}px</option>)}
+                  </select>
+                  <input type="color" value={axisColor} onChange={e=>setAxisColor(e.target.value)} title="Axis label color"
+                    style={{width:34,height:26,padding:0,border:"1px solid #2a2a3e",borderRadius:6,background:"#070710",cursor:"pointer"}}/>
+                </div>
+              )}
               {(chartType==="Bar"||chartType==="Line")&&<SectionLabel>SCALE &amp; VALUES</SectionLabel>}
               {(chartType==="Bar"||chartType==="Line")&&(
                 <div style={{display:"flex",gap:16,flexWrap:"wrap",alignItems:"center",marginTop:6}}>
@@ -1233,7 +1282,7 @@ function DataVizStudio11(){
               <div style={{display:"flex",gap:16,flexWrap:"wrap",alignItems:"center",marginTop:6}}>
                 <label style={{display:"flex",alignItems:"center",gap:6}}>
                   <span style={{fontSize:8,color:"#555",letterSpacing:1,fontWeight:700}}>THEME</span>
-                  <select value={theme} onChange={e=>setTheme(e.target.value)}
+                  <select value={theme} onChange={e=>{const t=e.target.value;setTheme(t);setTitleColor(t==="light"?"#111111":"#ffffff");setAxisColor(t==="light"?"#444444":"#aaaaaa");}}
                     style={{background:"#070710",border:"1px solid #2a2a3e",borderRadius:6,color:"#e0e0e0",padding:"5px 7px",fontSize:12,fontFamily:"monospace",outline:"none"}}>
                     <option value="dark">Dark</option><option value="light">Light (for slides)</option>
                   </select>
@@ -1301,7 +1350,7 @@ function DataVizStudio11(){
             </div>
 
             <div style={{background:"#212838",border:"1px solid #2c3446",borderRadius:12,padding:"20px 14px",textAlign:"center"}}>
-              <div style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:15,color:"#fff",marginBottom:3}}>{editTitle||chartData.title}</div>
+              <div style={{fontFamily:FONTS[titleFont]||"monospace",fontWeight:700,fontSize:titleSize,color:titleColor,marginBottom:3,lineHeight:1.2}}>{editTitle||chartData.title}</div>
               <div style={{fontSize:9,color:"#333",marginBottom:16,letterSpacing:1}}>{chartType.toUpperCase()} · {chartData.data.length} ITEMS</div>
               <div style={{display:"flex",justifyContent:"center"}}>{renderChart(displayData)}</div>
               {isMultiSeries
